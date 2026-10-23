@@ -4020,9 +4020,9 @@ function initStockfish() {
         new Promise(
             (resolve, reject) => {
 
-                try {
+                const workerGeneration = ++engineGeneration;
 
-                    const workerGeneration = ++engineGeneration;
+                try {
 
                     stockfish =
                         new Worker(
