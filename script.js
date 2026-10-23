@@ -24,12 +24,13 @@ let stockfish = null;
 let enginePromise = null;
 let activeEngineRequest = null;
 let analysisRunId = 0;
+let engineGeneration = 0;
 
 const engineCache = new Map();
 
-// Start lower for full-game browser analysis.
-// We can add a Deep Analysis option later.
-const ENGINE_DEPTH = 10;
+// Depth 14 improves move evaluation over the original depth 10.
+// Higher depth takes longer, especially for long PGNs.
+const ENGINE_DEPTH = 14;
 
 // ======================================================
 // HTML SAFETY
@@ -510,16 +511,21 @@ function injectAnalyzerStyles() {
 
         .ca-engine-status {
             margin-top: 10px;
-
             padding: 11px 13px;
-
             border-radius: 10px;
-
-            background:
-                rgba(255,255,255,0.04);
-
+            background: rgba(255,255,255,0.04);
             font-size: 13px;
+            line-height: 1.45;
         }
+
+        .ca-engine-status[data-classification="Brilliant"] { border-left: 3px solid #45d8c5; }
+        .ca-engine-status[data-classification="Great"] { border-left: 3px solid #7ab7ff; }
+        .ca-engine-status[data-classification="Best"] { border-left: 3px solid #a9d34f; }
+        .ca-engine-status[data-classification="Excellent"] { border-left: 3px solid #6bd15c; }
+        .ca-engine-status[data-classification="Good"] { border-left: 3px solid #8bb89b; }
+        .ca-engine-status[data-classification="Book"] { border-left: 3px solid #b6a0ff; }
+        .ca-engine-status[data-classification="Blunder"],
+        .ca-engine-status[data-classification="Miss"] { border-left: 3px solid #ff5555; }
 
         /* =============================================
            PROGRESS
@@ -772,8 +778,40 @@ function injectAnalyzerStyles() {
             color: #ff9b44;
         }
 
-        .ca-blunder {
-            color: #ff5555;
+        .ca-blunder { color: #ff5555; }
+        .ca-brilliant { color: #45d8c5; }
+        .ca-great { color: #7ab7ff; }
+        .ca-book { color: #b6a0ff; }
+        .ca-miss { color: #ff7474; }
+
+        .ca-move-badge {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 2px 5px;
+            border-radius: 5px;
+            font-size: 10px;
+            font-weight: 800;
+            vertical-align: middle;
+            background: rgba(255,255,255,0.07);
+            color: rgba(255,255,255,0.82);
+        }
+
+        .ca-move-badge:empty { display: none; }
+        .ca-move-button[data-classification="Brilliant"] { border-color: rgba(69,216,197,0.75); }
+        .ca-move-button[data-classification="Great"] { border-color: rgba(122,183,255,0.75); }
+        .ca-move-button[data-classification="Book"] { border-color: rgba(182,160,255,0.65); }
+        .ca-move-button[data-classification="Miss"] { border-color: rgba(255,116,116,0.75); }
+
+        .ca-current-classification {
+            display: inline-flex;
+            align-items: center;
+            margin-top: 9px;
+            padding: 5px 9px;
+            border-radius: 7px;
+            font-size: 12px;
+            font-weight: 800;
+            background: rgba(255,255,255,0.07);
+            color: rgba(255,255,255,0.82);
         }
 
         /* =============================================
@@ -992,16 +1030,52 @@ function createEmptyStats() {
 
     return {
 
+        Book: 0,
+        Brilliant: 0,
+        Great: 0,
         Best: 0,
         Excellent: 0,
         Good: 0,
         Inaccuracy: 0,
         Mistake: 0,
+        Miss: 0,
         Blunder: 0,
 
         totalAccuracy: 0,
         moves: 0
     };
+}
+
+// ======================================================
+// SAFE ENGINE CANCELLATION
+// ======================================================
+
+function cancelActiveEngineRequest() {
+
+    // Invalidate all messages from the old worker first.
+    engineGeneration++;
+
+    if (activeEngineRequest) {
+        const request = activeEngineRequest;
+        activeEngineRequest = null;
+
+        try {
+            request.reject(new Error("Analysis cancelled."));
+        } catch (e) {
+            // The request may already have settled.
+        }
+    }
+
+    if (stockfish) {
+        try {
+            stockfish.terminate();
+        } catch (e) {
+            // Ignore worker termination errors.
+        }
+    }
+
+    stockfish = null;
+    enginePromise = null;
 }
 
 // ======================================================
@@ -1026,18 +1100,9 @@ analyzeButton.addEventListener("click", async () => {
     // New analysis run
     analysisRunId++;
 
-    // Stop previous search
-    if (activeEngineRequest) {
-
-        try {
-            stockfish.postMessage("stop");
-        } catch (e) {
-            // Ignore
-        }
-
-        activeEngineRequest =
-            null;
-    }
+    // Cancel the previous worker completely so a late bestmove
+    // cannot be mistaken for the next position's result.
+    cancelActiveEngineRequest();
 
     engineCache.clear();
 
@@ -1216,6 +1281,9 @@ analyzeButton.addEventListener("click", async () => {
 
                 to:
                     playedMove.to,
+
+                promotion:
+                    playedMove.promotion || null,
 
                 fen:
                     chess.fen(),
@@ -1684,6 +1752,12 @@ function renderAnalyzer() {
 
                         </div>
 
+                        <div
+                            id="ca-current-classification"
+                            class="ca-current-classification">
+                            Waiting for analysis
+                        </div>
+
                     </div>
 
                     <!-- ENGINE -->
@@ -1838,12 +1912,11 @@ function renderAnalyzer() {
 
                     <div class="ca-analysis-note">
 
-                        Accuracy and move classifications
-                        are calculated from Stockfish
-                        evaluation changes. They are
-                        custom calculations and do not
-                        reproduce a proprietary chess site's
-                        exact scoring system.
+                        Stockfish depth 14 is used for stronger evaluations,
+                        so long games take longer to analyze. Move labels and
+                        accuracy are custom estimates, not Chess.com's exact
+                        scoring system. Book labels come from a small built-in
+                        opening reference; Brilliant and Great use heuristics.
 
                     </div>
 
@@ -2087,6 +2160,11 @@ async function runAutomaticAnalysis() {
 
     } catch (error) {
 
+        // Ignore cancellation errors from an older analysis run.
+        if (runId !== analysisRunId) {
+            return;
+        }
+
         console.error(
             "Automatic analysis failed:",
             error
@@ -2150,79 +2228,121 @@ function scoreFromWhitePerspective(
 }
 
 // ======================================================
+// SMALL BUILT-IN OPENING REFERENCE
+// ======================================================
+// Book labels are used only for recognized lines below. This is a small
+// offline reference, not a complete opening database.
+
+const BUILT_IN_BOOK_LINES = [
+    "e4 e5 Nf3 Nc6 Bc4 Bc5",
+    "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7",
+    "e4 e5 Nf3 Nc6 Bc4 Nf6 d3 Bc5 c3",
+    "e4 e5 Nf3 Nc6 d4 exd4 Nxd4",
+    "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3",
+    "e4 c6 d4 d5 Nc3 dxe4 Nxe4",
+    "e4 e6 d4 d5 Nc3 Nf6",
+    "e4 e6 d4 d5 e5 c5",
+    "d4 d5 c4 e6 Nc3 Nf6 Bg5",
+    "d4 d5 c4 c6 Nf3 Nf6 Nc3",
+    "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6",
+    "d4 Nf6 c4 e6 Nc3 Bb4",
+    "d4 Nf6 Nf3 g6 Bf4",
+    "d4 Nf6 Nf3 e6 g3 d5 Bg2",
+    "d4 f5 g3 Nf6 Bg2 g6",
+    "e4 e5 f4 exf4 Nf3",
+    "e4 e5 d4 exd4 c3",
+    "e4 Nc6 d4 d5 Nc3"
+].map(line => line.split(/\s+/));
+
+function normalizeSan(san) {
+    return String(san || "").replace(/[+#?!]+/g, "");
+}
+
+function isKnownBookMove(index) {
+    const played = gameData.positions
+        .slice(1, index + 1)
+        .map(position => normalizeSan(position.san));
+
+    if (!played.length) return false;
+
+    return BUILT_IN_BOOK_LINES.some(line =>
+        played.length <= line.length &&
+        played.every((move, i) => move === normalizeSan(line[i]))
+    );
+}
+
+function isEngineBestMove(before, after) {
+    const bestMove = before.analysis && before.analysis.bestMove;
+    if (!bestMove || !after.from || !after.to) return false;
+
+    const playedUci = (after.from + after.to + (after.promotion || "")).toLowerCase();
+    return playedUci === String(bestMove).toLowerCase();
+}
+
+function isApparentSoundSacrifice(after) {
+    // Heuristic: the engine's top reply captures the valuable piece that just
+    // moved, while the position remains sound. Not a full brilliance detector.
+    const pvMove = String(after.analysis?.pv || "").split(/\s+/)[0];
+    if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(pvMove)) return false;
+    if (pvMove.slice(2, 4) !== after.to) return false;
+
+    try {
+        const chess = new Chess(after.fen);
+        const piece = chess.get(after.to);
+        if (!piece || !["n", "b", "r", "q"].includes(piece.type)) return false;
+
+        const reply = chess.move({
+            from: pvMove.slice(0, 2),
+            to: pvMove.slice(2, 4),
+            promotion: pvMove[4]
+        });
+        return Boolean(reply && reply.captured);
+    } catch (error) {
+        return false;
+    }
+}
+
+// ======================================================
 // CLASSIFY MOVE
 // ======================================================
 
 function classifyMove(index) {
+    const after = gameData.positions[index];
+    const before = gameData.positions[index - 1];
+    if (!before.analysis || !after.analysis) return;
 
-    const after =
-        gameData.positions[index];
+    const beforeScore = before.analysis.whiteScore;
+    const afterScore = after.analysis.whiteScore;
+    if (beforeScore === null || afterScore === null) return;
 
-    const before =
-        gameData.positions[index - 1];
+    // Both scores are White-relative; convert to the mover's perspective.
+    const moverBefore = after.side === "w" ? beforeScore : -beforeScore;
+    const moverAfter = after.side === "w" ? afterScore : -afterScore;
+    const pawnLoss = Math.max(0, moverBefore - moverAfter) / 100;
 
-    if (
-        !before.analysis ||
-        !after.analysis
-    ) {
+    after.loss = pawnLoss;
+    after.accuracy = lossToAccuracy(pawnLoss);
 
-        return;
-    }
+    const bestMove = isEngineBestMove(before, after);
+    const bookMove = isKnownBookMove(index);
+    const brilliantCandidate = bestMove && isApparentSoundSacrifice(after);
+    const forcingBest = bestMove && (/[+#]$/.test(after.san) || Boolean(after.promotion));
 
-    const beforeScore =
-        before.analysis.whiteScore;
-
-    const afterScore =
-        after.analysis.whiteScore;
-
-    if (
-        beforeScore === null ||
-        afterScore === null
-    ) {
-
-        return;
-    }
-
-    let loss;
-
-    // White wants the score to increase.
-    if (
-        after.side === "w"
-    ) {
-
-        loss =
-            beforeScore -
-            afterScore;
-
-    // Black wants the score to decrease.
+    if (bookMove) {
+        after.classification = "Book";
+    } else if (brilliantCandidate && pawnLoss <= 0.20 && moverAfter >= -100) {
+        after.classification = "Brilliant";
+    } else if (forcingBest && pawnLoss <= 0.10) {
+        after.classification = "Great";
+    } else if (bestMove && pawnLoss <= 0.25) {
+        after.classification = "Best";
+    } else if (moverBefore >= 200 && moverAfter <= 50 && pawnLoss >= 0.75) {
+        after.classification = "Miss";
     } else {
-
-        loss =
-            afterScore -
-            beforeScore;
+        after.classification = classifyLoss(pawnLoss);
     }
 
-    loss =
-        Math.max(
-            0,
-            loss
-        );
-
-    const pawnLoss =
-        loss / 100;
-
-    after.loss =
-        pawnLoss;
-
-    after.accuracy =
-        lossToAccuracy(
-            pawnLoss
-        );
-
-    after.classification =
-        classifyLoss(
-            pawnLoss
-        );
+    after.bestMovePlayed = bestMove;
 }
 
 // ======================================================
@@ -2230,27 +2350,10 @@ function classifyMove(index) {
 // ======================================================
 
 function classifyLoss(loss) {
-
-    if (loss <= 0.05) {
-        return "Best";
-    }
-
-    if (loss <= 0.15) {
-        return "Excellent";
-    }
-
-    if (loss <= 0.35) {
-        return "Good";
-    }
-
-    if (loss <= 0.75) {
-        return "Inaccuracy";
-    }
-
-    if (loss <= 1.50) {
-        return "Mistake";
-    }
-
+    if (loss <= 0.10) return "Excellent";
+    if (loss <= 0.25) return "Good";
+    if (loss <= 0.50) return "Inaccuracy";
+    if (loss <= 1.00) return "Mistake";
     return "Blunder";
 }
 
@@ -2416,16 +2519,14 @@ function updateMoveButtonClassifications() {
                 return;
             }
 
-            if (
-                position.classification
-            ) {
+            const badge = button.querySelector(".ca-move-badge");
 
-                button.dataset.classification =
-                    position.classification;
-
+            if (position.classification) {
+                button.dataset.classification = position.classification;
+                if (badge) badge.textContent = position.classification;
             } else {
-
                 delete button.dataset.classification;
+                if (badge) badge.textContent = "";
             }
         }
     );
@@ -2450,12 +2551,8 @@ function updateCountGrid(
     }
 
     const classifications = [
-        "Best",
-        "Excellent",
-        "Good",
-        "Inaccuracy",
-        "Mistake",
-        "Blunder"
+        "Book", "Brilliant", "Great", "Best", "Excellent",
+        "Good", "Inaccuracy", "Mistake", "Miss", "Blunder"
     ];
 
     element.innerHTML = "";
@@ -3149,6 +3246,11 @@ function renderPosition() {
             "ca-current-move"
         );
 
+    const currentClassificationElement =
+        document.getElementById(
+            "ca-current-classification"
+        );
+
     const fenElement =
         document.getElementById(
             "ca-fen"
@@ -3457,14 +3559,21 @@ function renderPosition() {
     // CURRENT MOVE
     // ==================================================
 
-    if (
-        currentMoveElement
-    ) {
-
+    if (currentMoveElement) {
         currentMoveElement.textContent =
+            currentPosition === 0 ? "Starting Position" : position.label;
+    }
+
+    if (currentClassificationElement) {
+        currentClassificationElement.textContent =
             currentPosition === 0
-                ? "Starting Position"
-                : position.label;
+                ? "Initial position"
+                : (position.classification || "Not analyzed yet");
+        currentClassificationElement.className =
+            "ca-current-classification" +
+            (position.classification
+                ? " ca-" + position.classification.toLowerCase()
+                : "");
     }
 
     // ==================================================
@@ -3540,53 +3649,22 @@ function renderPosition() {
     // ==================================================
 
     // ==================================================
-    // STATUS
+    // MOVE QUALITY STATUS
     // ==================================================
 
-    const statusElement =
-        document.getElementById(
-            "ca-engine-status"
-        );
+    const statusElement = document.getElementById("ca-engine-status");
 
-    if (
-        statusElement &&
-        gameData.analyzed
-    ) {
-
-        if (
-            chess.in_checkmate()
-        ) {
-
-            statusElement.textContent =
-                "♟ Checkmate position";
-
-        } else if (
-            chess.in_stalemate()
-        ) {
-
-            statusElement.textContent =
-                "Draw by stalemate";
-
-        } else if (
-            chess.in_draw()
-        ) {
-
-            statusElement.textContent =
-                "Draw position";
-
-        } else if (
-            chess.in_check()
-        ) {
-
-            statusElement.textContent =
-                `${turnName} is in check`;
-
+    if (statusElement && gameData.analyzed) {
+        if (currentPosition === 0) {
+            delete statusElement.dataset.classification;
+            statusElement.textContent = "♟ Initial position — select a move to review its quality.";
         } else {
-
-            statusElement.textContent =
-                `${turnName} to move`;
+            const quality = position.classification || "Move reviewed";
+            statusElement.textContent = `${quality} move · ${position.label}`;
+            statusElement.dataset.classification = quality;
         }
     }
+
 }
 
 // ======================================================
@@ -3688,6 +3766,10 @@ function renderMoveList() {
                 ${escapeHtml(
                     position.san
                 )}
+
+                <span class="ca-move-badge">
+                    ${escapeHtml(position.classification || "")}
+                </span>
             `;
 
             button.addEventListener(
@@ -3941,6 +4023,8 @@ function initStockfish() {
 
                 try {
 
+                    const workerGeneration = ++engineGeneration;
+
                     stockfish =
                         new Worker(
                             "engine/stockfish-19-lite-single.js"
@@ -3962,13 +4046,15 @@ function initStockfish() {
                     setTimeout(
                         () => {
 
-                            enginePromise =
-                                null;
+                            if (workerGeneration !== engineGeneration) {
+                                reject(new Error("Stockfish initialization cancelled."));
+                                return;
+                            }
+
+                            enginePromise = null;
 
                             try {
-
                                 stockfish.terminate();
-
                             } catch (e) {
                                 // Ignore
                             }
@@ -3985,6 +4071,10 @@ function initStockfish() {
 
                 stockfish.onmessage =
                     event => {
+
+                        if (workerGeneration !== engineGeneration) {
+                            return;
+                        }
 
                         const line =
                             String(
@@ -4096,6 +4186,10 @@ function initStockfish() {
 
                 stockfish.onerror =
                     error => {
+
+                        if (workerGeneration !== engineGeneration) {
+                            return;
+                        }
 
                         console.error(
                             "Stockfish worker error:",
@@ -4223,30 +4317,15 @@ function evaluateFen(
                         reject
                     ) => {
 
-                        // Cancel previous search
-                        if (
-                            activeEngineRequest
-                        ) {
-
-                            try {
-
-                                stockfish.postMessage(
-                                    "stop"
-                                );
-
-                            } catch (e) {
-                                // Ignore
-                            }
-
-                            activeEngineRequest
-                                .reject(
-                                    new Error(
-                                        "Previous analysis cancelled."
-                                    )
-                                );
-
-                            activeEngineRequest =
-                                null;
+                        // Analysis is sequential. Never replace a live request:
+                        // its bestmove could otherwise resolve the wrong position.
+                        if (activeEngineRequest) {
+                            reject(
+                                new Error(
+                                    "Stockfish is already analyzing another position."
+                                )
+                            );
+                            return;
                         }
 
                         activeEngineRequest = {
