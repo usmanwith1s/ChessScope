@@ -15,6 +15,8 @@ const result = document.getElementById("result");
 let gameData = null;
 let currentPosition = 0;
 let autoplayTimer = null;
+let soundsEnabled = true;
+let soundAudioContext = null;
 
 // ======================================================
 // STOCKFISH
@@ -29,7 +31,7 @@ let engineGeneration = 0;
 const engineCache = new Map();
 
 // Keep full-game analysis responsive. Higher depths can take a long time per move.
-const ENGINE_DEPTH = 10;
+const ENGINE_DEPTH = 12;
 
 // ======================================================
 // HTML SAFETY
@@ -1284,6 +1286,12 @@ analyzeButton.addEventListener("click", async () => {
                 promotion:
                     playedMove.promotion || null,
 
+                captured:
+                    playedMove.captured || null,
+
+                flags:
+                    playedMove.flags || "",
+
                 fen:
                     chess.fen(),
 
@@ -1631,6 +1639,17 @@ function renderAnalyzer() {
 
                         </button>
 
+                        <button
+                            id="ca-sound"
+                            class="ca-control"
+                            type="button"
+                            aria-pressed="true"
+                            title="Toggle original chess move sounds">
+
+                            🔊 Sound on
+
+                        </button>
+
                     </div>
 
                 </div>
@@ -1911,11 +1930,11 @@ function renderAnalyzer() {
 
                     <div class="ca-analysis-note">
 
-                        Stockfish depth 10 is used to keep full-game analysis responsive,
-                        so long games take longer to analyze. Move labels and
-                        accuracy are custom estimates, not Chess.com's exact
-                        scoring system. Book labels come from a small built-in
-                        opening reference; Brilliant and Great use heuristics.
+                        Stockfish 19 Lite single-threaded analyzes each position to depth 12.
+                        Analysis time depends on game length and your device. Move labels
+                        are engine-based estimates, not Chess.com's proprietary review.
+                        Opening-book coverage is limited; Brilliant, Great and Miss are
+                        conservative heuristics and can differ from other platforms.
 
                     </div>
 
@@ -1991,6 +2010,16 @@ function renderAnalyzer() {
             "click",
             toggleAutoplay
         );
+
+    const soundButton = document.getElementById("ca-sound");
+    if (soundButton) {
+        soundButton.addEventListener("click", () => {
+            soundsEnabled = !soundsEnabled;
+            soundButton.textContent = soundsEnabled ? "🔊 Sound on" : "🔇 Sound off";
+            soundButton.setAttribute("aria-pressed", String(soundsEnabled));
+            if (soundsEnabled) playUiTone("move");
+        });
+    }
 }
 
 // ======================================================
@@ -2296,9 +2325,9 @@ function isApparentSoundSacrifice(after) {
     }
 
     const pieceValue = { p: 1, n: 3, b: 3, r: 5, q: 9 };
-    // after.side is the opponent to move in the post-move position.
-    // The player who made the candidate sacrifice is the opposite color.
-    const moverColor = after.side === "w" ? "b" : "w";
+    // PGN parsing stores playedMove.color in after.side, so this is the
+    // color that made the candidate move (not the side-to-move in the FEN).
+    const moverColor = after.side;
     let chess;
     try {
         chess = new Chess(after.fen);
@@ -2382,6 +2411,14 @@ function classifyMove(index) {
     const bestMove = isEngineBestMove(before, after);
     const bookMove = isKnownBookMove(index);
     const brilliantCandidate = bestMove && isApparentSoundSacrifice(after);
+    // Great is an intentionally rare heuristic: a top-engine response that
+    // correctly capitalizes on an opponent mistake/blunder while holding a
+    // clear advantage. This is not Chess.com's private critical-move logic.
+    const greatCandidate = bestMove &&
+        ["Mistake", "Blunder"].includes(before.classification) &&
+        moverBefore >= 150 &&
+        moverAfter >= 150 &&
+        expectedPointsLoss <= 1.5;
 
     // A missed opportunity is only considered when the opponent's previous
     // move was already marked as a mistake/blunder and this move gives away
@@ -2404,6 +2441,8 @@ function classifyMove(index) {
         // Deliberately conservative: a top engine move plus an apparent,
         // sound piece sacrifice. This remains a heuristic, not Chess.com's code.
         after.classification = "Brilliant";
+    } else if (greatCandidate) {
+        after.classification = "Great";
     } else if (bestMove) {
         after.classification = "Best";
     } else if (missedOpportunity) {
@@ -3863,6 +3902,59 @@ function renderMoveList() {
 }
 
 // ======================================================
+// ORIGINAL SYNTHESIZED CHESS SOUNDS (no copied third-party audio)
+// ======================================================
+
+function getSoundContext() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    if (!soundAudioContext) soundAudioContext = new AudioContextClass();
+    if (soundAudioContext.state === "suspended") soundAudioContext.resume().catch(() => {});
+    return soundAudioContext;
+}
+
+function playUiTone(kind = "move") {
+    if (!soundsEnabled) return;
+    const ctx = getSoundContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const tones = kind === "check" ? [520, 390] : kind === "promotion" ? [540, 720, 900] : kind === "capture" ? [190, 125] : kind === "castle" ? [240, 330] : [220];
+    tones.forEach((frequency, index) => {
+        const start = now + index * (kind === "check" ? 0.075 : 0.045);
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+        osc.type = kind === "promotion" ? "sine" : "triangle";
+        osc.frequency.setValueAtTime(frequency, start);
+        if (kind === "move" || kind === "capture") {
+            osc.frequency.exponentialRampToValueAtTime(Math.max(60, frequency * 0.58), start + 0.065);
+        }
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(kind === "capture" ? 1100 : 1800, start);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(kind === "promotion" ? 0.075 : 0.11, start + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + (kind === "promotion" ? 0.14 : 0.085));
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + (kind === "promotion" ? 0.15 : 0.095));
+    });
+}
+
+function playMoveSound(position) {
+    if (!soundsEnabled || !position || !position.fen) return;
+    let kind = position.captured ? "capture" : "move";
+    if (position.promotion) kind = "promotion";
+    else if (String(position.flags || "").includes("k") || String(position.flags || "").includes("q")) kind = "castle";
+    try {
+        const chess = new Chess(position.fen);
+        if (typeof chess.in_check === "function" && chess.in_check()) kind = "check";
+    } catch (error) { /* Keep the normal move sound if position parsing fails. */ }
+    playUiTone(kind);
+}
+
+// ======================================================
 // GO TO POSITION
 // ======================================================
 
@@ -3888,8 +3980,12 @@ function goToPosition(index) {
             gameData.positions.length - 1;
     }
 
-    currentPosition =
-        index;
+    const previousPosition = currentPosition;
+    currentPosition = index;
+
+    if (index === previousPosition + 1) {
+        playMoveSound(gameData.positions[index]);
+    }
 
     renderPosition();
 }
@@ -3971,6 +4067,7 @@ function toggleAutoplay() {
 
                 currentPosition++;
 
+                playMoveSound(gameData.positions[currentPosition]);
                 renderPosition();
 
             },
