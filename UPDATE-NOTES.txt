@@ -1,0 +1,52 @@
+Chess Analyzer — Final Review Reliability Update
+Date: 2026-10-23
+
+Changes in this build
+---------------------
+- Fixed the Brilliant sacrifice detector's color perspective. The PGN parser
+  stores the moving player's color in each position's `side` property; the
+  detector now uses that stored color rather than its opposite.
+- Raised the default Stockfish depth from 10 to 12 for a stronger per-position
+  search, with a corresponding increase in analysis time.
+- Added original synthesized move sounds using the Web Audio API: normal move,
+  capture, check, castling, and promotion tones. The sound toggle appears with
+  the move navigation controls. No proprietary Chess.com audio files are used.
+- Added a Great-move heuristic: a top-engine move that capitalizes on an
+  opponent's Mistake/Blunder while holding a clear advantage. This is an
+  approximation, not Chess.com's proprietary critical-move detector.
+- Updated the on-page limitations text and script cache-buster.
+- Added third-party attribution/source links for the bundled Stockfish.js and
+  chess.js dependency.
+
+Important accuracy notes
+------------------------
+- This is an engine-based review, not an exact reproduction of Chess.com's
+  private CAPS2 / Expected Points model. Chess.com does not publish enough of
+  that model to reproduce its labels exactly.
+- The site analyzes positions individually with Stockfish 19 Lite single-
+  threaded at depth 12. Device speed, position complexity, and search depth can
+  affect evaluations and move labels.
+- Best/Excellent/Good/Inaccuracy/Mistake/Blunder labels are approximations based
+  on evaluation changes and a public win-percentage curve. Great, Brilliant,
+  and Miss remain heuristics; they can still disagree with Chess.com.
+- The built-in opening reference is limited, so Book labels will not cover all
+  legitimate opening theory.
+- Per-game accuracy is still a simple average of move accuracies, not the exact
+  game-level aggregation used by Chess.com or Lichess.
+- Sound effects are newly synthesized, not copies of Chess.com's protected
+  audio assets.
+
+Validation
+----------
+- JavaScript syntax check passed with Node.js.
+- ZIP integrity check passed.
+- Static browser smoke test is required on the deployed GitHub Pages site.
+  Before announcing the launch, analyze several known PGNs and compare each
+  move—not just the category totals—with another review. Labels may differ
+  across platforms by design.
+
+Deployment
+----------
+Upload/replace index.html, script.js, and UPDATE-NOTES.txt, keep style.css and
+both files in the engine/ folder, and add THIRD-PARTY-NOTICES.txt. Do not rename
+the engine files or move them out of engine/.

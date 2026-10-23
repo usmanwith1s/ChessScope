@@ -1,0 +1,29 @@
+Chess Analyzer — Third-Party Notices
+====================================
+
+Stockfish.js 19 Lite single-threaded (JavaScript/WebAssembly)
+- Copyright: Stockfish.js copyright (c) 2026 Chess.com, LLC; Stockfish authors and contributors; NNUE network by Chris Bao (sscg13).
+- License: GNU General Public License v3 (GPL-3.0).
+- Upstream browser port and corresponding source/build information:
+  https://github.com/nmrugg/stockfish.js
+  https://github.com/nmrugg/stockfish.js/tree/v19.0.0
+- Upstream Stockfish engine:
+  https://github.com/official-stockfish/Stockfish
+- GPLv3 license text:
+  https://www.gnu.org/licenses/gpl-3.0.html
+- The distributed engine files are in engine/stockfish-19-lite-single.js and
+  engine/stockfish-19-lite-single.wasm. Keep these files together. The engine
+  is loaded as a separate Web Worker and communicates through UCI commands.
+
+chess.js 0.10.3
+- Loaded from the cdnjs CDN by index.html.
+- Project and license information:
+  https://github.com/jhlywa/chess.js
+  https://cdnjs.com/libraries/chess.js
+
+Original move sounds
+- Move/capture/check/castle/promotion sounds are synthesized by this project
+  using the Web Audio API. No Chess.com audio files are included or copied.
+
+This notice is provided for attribution and source access. Please review the
+upstream projects' license files and terms before redistributing the project.
