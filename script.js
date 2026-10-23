@@ -2279,26 +2279,73 @@ function isEngineBestMove(before, after) {
 }
 
 function isApparentSoundSacrifice(after) {
-    // Heuristic: the engine's top reply captures the valuable piece that just
-    // moved, while the position remains sound. Not a full brilliance detector.
-    const pvMove = String(after.analysis?.pv || "").split(/\s+/)[0];
-    if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(pvMove)) return false;
-    if (pvMove.slice(2, 4) !== after.to) return false;
+    // High-precision filter: do not call a move Brilliant merely because the
+    // opponent can capture the moved piece. Require a real piece sacrifice
+    // AND a concrete tactical payoff in Stockfish's principal variation.
+    const pvMoves = String(after.analysis?.pv || "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+    if (pvMoves.length < 3 || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(pvMoves[0])) {
+        return false;
+    }
 
+    const movedPiece = new Chess(after.fen).get(after.to);
+    if (!movedPiece || !["n", "b", "r", "q"].includes(movedPiece.type)) {
+        return false; // pawn moves and promotions are not enough by themselves
+    }
+
+    const pieceValue = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+    const moverColor = after.side;
+    let chess;
     try {
-        const chess = new Chess(after.fen);
-        const piece = chess.get(after.to);
-        if (!piece || !["n", "b", "r", "q"].includes(piece.type)) return false;
-
-        const reply = chess.move({
-            from: pvMove.slice(0, 2),
-            to: pvMove.slice(2, 4),
-            promotion: pvMove[4]
-        });
-        return Boolean(reply && reply.captured);
+        chess = new Chess(after.fen);
     } catch (error) {
         return false;
     }
+
+    let sacrificeWasTaken = false;
+    let materialBalance = 0; // positive means the original mover gained material
+    let foundTacticalPayoff = false;
+
+    // Replay a short section of the engine PV. We only accept a clear material
+    // recovery or a forced mate in the line; positional compensation alone is
+    // deliberately not enough for this first-pass Brilliant detector.
+    for (const uci of pvMoves.slice(0, 8)) {
+        if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)) break;
+        const from = uci.slice(0, 2);
+        const to = uci.slice(2, 4);
+        const promotion = uci[4];
+        let move;
+        try {
+            move = chess.move({ from, to, promotion });
+        } catch (error) {
+            return false;
+        }
+        if (!move) return false;
+
+        if (move.color !== moverColor && move.to === after.to && move.captured) {
+            sacrificeWasTaken = true;
+            materialBalance -= pieceValue[move.captured] || 0;
+        } else if (move.captured) {
+            const value = pieceValue[move.captured] || 0;
+            materialBalance += move.color === moverColor ? value : -value;
+        }
+
+        if (move.color === moverColor && move.san.endsWith("#")) {
+            foundTacticalPayoff = true;
+            break;
+        }
+
+        // Ignore the line before the alleged sacrifice is actually taken.
+        if (sacrificeWasTaken && materialBalance >= 0) {
+            foundTacticalPayoff = true;
+            break;
+        }
+
+    }
+
+    return sacrificeWasTaken && foundTacticalPayoff;
 }
 
 // ======================================================
