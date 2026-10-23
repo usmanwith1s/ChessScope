@@ -23,6 +23,7 @@ let autoplayTimer = null;
 let stockfish = null;
 let enginePromise = null;
 let activeEngineRequest = null;
+let engineGeneration = 0;
 let analysisRunId = 0;
 
 const engineCache = new Map();
@@ -989,6 +990,37 @@ function createEmptyStats() {
 }
 
 // ======================================================
+// CANCEL ACTIVE STOCKFISH SEARCH SAFELY
+// ======================================================
+
+function cancelActiveEngineRequest() {
+
+    const request = activeEngineRequest;
+
+    if (!request) {
+        return;
+    }
+
+    // Invalidate any messages already queued by the old worker.
+    engineGeneration++;
+
+    activeEngineRequest = null;
+
+    if (stockfish) {
+        stockfish.terminate();
+        stockfish = null;
+    }
+
+    // Force the next analysis to initialize a fresh worker.
+    enginePromise = null;
+
+    // Release the promise awaited by the previous analysis run.
+    request.reject(
+        new Error("Stockfish analysis cancelled.")
+    );
+}
+
+// ======================================================
 // ANALYZE BUTTON
 // ======================================================
 
@@ -1010,18 +1042,8 @@ analyzeButton.addEventListener("click", async () => {
     // New analysis run
     analysisRunId++;
 
-    // Stop previous search
-    if (activeEngineRequest) {
-
-        try {
-            stockfish.postMessage("stop");
-        } catch (e) {
-            // Ignore
-        }
-
-        activeEngineRequest =
-            null;
-    }
+    // Cancel the previous search without accepting stale results.
+    cancelActiveEngineRequest();
 
     engineCache.clear();
 
@@ -2070,6 +2092,11 @@ async function runAutomaticAnalysis() {
         }
 
     } catch (error) {
+
+        // A newer Analyze Game request has replaced this run.
+        if (runId !== analysisRunId) {
+            return;
+        }
 
         console.error(
             "Automatic analysis failed:",
@@ -3923,6 +3950,9 @@ function initStockfish() {
 
                 try {
 
+                    const workerGeneration =
+                        ++engineGeneration;
+
                     stockfish =
                         new Worker(
                             "engine/stockfish-19-lite-single.js"
@@ -3967,6 +3997,12 @@ function initStockfish() {
 
                 stockfish.onmessage =
                     event => {
+
+                        if (
+                            workerGeneration !== engineGeneration
+                        ) {
+                            return;
+                        }
 
                         const line =
                             String(
@@ -4078,6 +4114,12 @@ function initStockfish() {
 
                 stockfish.onerror =
                     error => {
+
+                        if (
+                            workerGeneration !== engineGeneration
+                        ) {
+                            return;
+                        }
 
                         console.error(
                             "Stockfish worker error:",
@@ -4205,30 +4247,16 @@ function evaluateFen(
                         reject
                     ) => {
 
-                        // Cancel previous search
-                        if (
-                            activeEngineRequest
-                        ) {
-
-                            try {
-
-                                stockfish.postMessage(
-                                    "stop"
-                                );
-
-                            } catch (e) {
-                                // Ignore
-                            }
-
-                            activeEngineRequest
-                                .reject(
-                                    new Error(
-                                        "Previous analysis cancelled."
-                                    )
-                                );
-
-                            activeEngineRequest =
-                                null;
+                        // This function is normally called sequentially.
+                        // Never replace a live request: its bestmove could
+                        // otherwise be mistaken for the next position.
+                        if (activeEngineRequest) {
+                            reject(
+                                new Error(
+                                    "Stockfish is already analyzing another position."
+                                )
+                            );
+                            return;
                         }
 
                         activeEngineRequest = {
