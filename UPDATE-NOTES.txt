@@ -3,6 +3,11 @@ Date: 2026-10-23
 
 Changes in this build
 ---------------------
+- Added player cards above the board with initials as safe fallback avatars.
+- The analyzer attempts to look up public Chess.com avatars when a PGN player tag
+  looks like a username. Display names are not guessed or converted into usernames.
+- If the profile cannot be found, has no public avatar, or browser cross-origin
+  restrictions block the request, the card remains usable with fallback initials.
 - Fixed the Brilliant sacrifice detector's color perspective. The PGN parser
   stores the moving player's color in each position's `side` property; the
   detector now uses that stored color rather than its opposite.
@@ -40,7 +45,7 @@ Validation
 ----------
 - JavaScript syntax check passed with Node.js.
 - ZIP integrity check passed.
-- Static browser smoke test is required on the deployed GitHub Pages site.
+- Static browser smoke test is required on the deployed GitHub Pages site, including the player avatar lookup.
   Before announcing the launch, analyze several known PGNs and compare each
   move—not just the category totals—with another review. Labels may differ
   across platforms by design.
