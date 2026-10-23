@@ -2296,7 +2296,9 @@ function isApparentSoundSacrifice(after) {
     }
 
     const pieceValue = { p: 1, n: 3, b: 3, r: 5, q: 9 };
-    const moverColor = after.side;
+    // after.side is the opponent to move in the post-move position.
+    // The player who made the candidate sacrifice is the opposite color.
+    const moverColor = after.side === "w" ? "b" : "w";
     let chess;
     try {
         chess = new Chess(after.fen);
