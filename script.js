@@ -2314,45 +2314,74 @@ function classifyMove(index) {
     const afterScore = after.analysis.whiteScore;
     if (beforeScore === null || afterScore === null) return;
 
-    // Both scores are White-relative; convert to the mover's perspective.
+    // Engine scores are stored from White's perspective. Convert both
+    // positions to the perspective of the player who made this move.
     const moverBefore = after.side === "w" ? beforeScore : -beforeScore;
     const moverAfter = after.side === "w" ? afterScore : -afterScore;
     const pawnLoss = Math.max(0, moverBefore - moverAfter) / 100;
 
-    after.loss = pawnLoss;
-    after.accuracy = lossToAccuracy(pawnLoss);
+    // Centipawns are not equally meaningful in winning and equal positions.
+    // Convert both evaluations to expected-score percentages before grading.
+    const expectedBefore = scoreToExpectedScore(moverBefore);
+    const expectedAfter = scoreToExpectedScore(moverAfter);
+    const expectedPointsLoss = Math.max(0, expectedBefore - expectedAfter);
+
+    after.loss = pawnLoss; // Keep the familiar pawn-loss display.
+    after.expectedPointsLoss = expectedPointsLoss;
+    after.accuracy = lossToAccuracy(expectedPointsLoss);
 
     const bestMove = isEngineBestMove(before, after);
     const bookMove = isKnownBookMove(index);
     const brilliantCandidate = bestMove && isApparentSoundSacrifice(after);
-    const forcingBest = bestMove && (/[+#]$/.test(after.san) || Boolean(after.promotion));
+
+    // A missed opportunity is only considered when the opponent's previous
+    // move was already marked as a mistake/blunder and this move gives away
+    // a meaningful part of the resulting advantage.
+    const opponentErr = ["Mistake", "Blunder"].includes(before.classification);
+    const missedOpportunity = opponentErr &&
+        moverBefore >= 150 &&
+        expectedPointsLoss >= 5 &&
+        expectedPointsLoss <= 20 &&
+        !bestMove;
 
     if (bookMove) {
         after.classification = "Book";
-    } else if (brilliantCandidate && pawnLoss <= 0.20 && moverAfter >= -100) {
+    } else if (
+        brilliantCandidate &&
+        expectedPointsLoss <= 2 &&
+        moverBefore < 300 &&
+        moverAfter >= -100
+    ) {
+        // Deliberately conservative: a top engine move plus an apparent,
+        // sound piece sacrifice. This remains a heuristic, not Chess.com's code.
         after.classification = "Brilliant";
-    } else if (forcingBest && pawnLoss <= 0.10) {
-        after.classification = "Great";
-    } else if (bestMove && pawnLoss <= 0.25) {
+    } else if (bestMove) {
         after.classification = "Best";
-    } else if (moverBefore >= 200 && moverAfter <= 50 && pawnLoss >= 0.75) {
+    } else if (missedOpportunity) {
         after.classification = "Miss";
     } else {
-        after.classification = classifyLoss(pawnLoss);
+        after.classification = classifyExpectedPointsLoss(expectedPointsLoss);
     }
 
     after.bestMovePlayed = bestMove;
 }
 
-// ======================================================
-// MOVE CLASSIFICATION
-// ======================================================
+// Map Stockfish centipawns to an expected-score percentage using the
+// published Lichess win-percentage curve. It is a useful public model, not
+// the private Chess.com rating-dependent Expected Points model.
+function scoreToExpectedScore(centipawns) {
+    const cp = Math.max(-100000, Math.min(100000, Number(centipawns) || 0));
+    return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1);
+}
 
-function classifyLoss(loss) {
-    if (loss <= 0.10) return "Excellent";
-    if (loss <= 0.25) return "Good";
-    if (loss <= 0.50) return "Inaccuracy";
-    if (loss <= 1.00) return "Mistake";
+// Public Chess.com classification cutoffs are expressed as expected-points
+// loss. Here they are applied to this site's Lichess-inspired estimate, so
+// labels are consistent but are not promised to match Chess.com exactly.
+function classifyExpectedPointsLoss(loss) {
+    if (loss <= 2) return "Excellent";
+    if (loss <= 5) return "Good";
+    if (loss <= 10) return "Inaccuracy";
+    if (loss <= 20) return "Mistake";
     return "Blunder";
 }
 
@@ -2360,21 +2389,15 @@ function classifyLoss(loss) {
 // ACCURACY
 // ======================================================
 
-function lossToAccuracy(loss) {
+// Published Lichess move-accuracy curve; input is the loss in expected-score
+// percentage points, not raw pawn/centipawn loss.
+function lossToAccuracy(expectedPointsLoss) {
+    if (expectedPointsLoss <= 0) return 100;
 
     const accuracy =
-        100 *
-        Math.exp(
-            -loss / 2.5
-        );
+        103.1668 * Math.exp(-0.04354 * expectedPointsLoss) - 3.1669;
 
-    return Math.max(
-        0,
-        Math.min(
-            100,
-            accuracy
-        )
-    );
+    return Math.max(0, Math.min(100, accuracy));
 }
 
 // ======================================================
@@ -4020,6 +4043,8 @@ function initStockfish() {
         new Promise(
             (resolve, reject) => {
 
+                // Keep this in the Promise executor scope so the worker callbacks
+                // below can access it (a const inside try would be out of scope).
                 const workerGeneration = ++engineGeneration;
 
                 try {
