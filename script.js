@@ -28,9 +28,8 @@ let engineGeneration = 0;
 
 const engineCache = new Map();
 
-// Depth 14 improves move evaluation over the original depth 10.
-// Higher depth takes longer, especially for long PGNs.
-const ENGINE_DEPTH = 14;
+// Keep full-game analysis responsive. Higher depths can take a long time per move.
+const ENGINE_DEPTH = 10;
 
 // ======================================================
 // HTML SAFETY
@@ -1912,7 +1911,7 @@ function renderAnalyzer() {
 
                     <div class="ca-analysis-note">
 
-                        Stockfish depth 14 is used for stronger evaluations,
+                        Stockfish depth 10 is used to keep full-game analysis responsive,
                         so long games take longer to analyze. Move labels and
                         accuracy are custom estimates, not Chess.com's exact
                         scoring system. Book labels come from a small built-in
