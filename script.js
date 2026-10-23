@@ -119,6 +119,91 @@ function injectAnalyzerStyles() {
             width: 100%;
         }
 
+
+        /* =============================================
+           PLAYER PROFILE CARDS
+        ============================================= */
+
+        .ca-player-cards {
+            width: min(100%, 600px);
+            margin: 0 auto 14px;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .ca-player-card {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 12px;
+            border: 1px solid rgba(255,255,255,0.09);
+            border-radius: 14px;
+            background: rgba(255,255,255,0.035);
+        }
+
+        .ca-player-avatar,
+        .ca-player-fallback {
+            width: 48px;
+            height: 48px;
+            flex: 0 0 48px;
+            border-radius: 50%;
+            object-fit: cover;
+            background: linear-gradient(135deg, #b6f7ca, #3e8d65);
+            color: #092016;
+        }
+
+        .ca-player-fallback {
+            display: grid;
+            place-items: center;
+            font-size: 16px;
+            font-weight: 800;
+        }
+
+        .ca-player-copy {
+            min-width: 0;
+        }
+
+        .ca-player-color {
+            display: block;
+            margin-bottom: 3px;
+            color: #9bb6a5;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .ca-player-name {
+            display: block;
+            overflow: hidden;
+            color: #f2f7f4;
+            font-size: 14px;
+            font-weight: 750;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            text-decoration: none;
+        }
+
+        .ca-player-name[href]:hover {
+            color: #a7f3c0;
+        }
+
+        .ca-player-rating {
+            display: block;
+            margin-top: 3px;
+            color: #a9bbb1;
+            font-size: 11px;
+        }
+
+        .ca-player-status {
+            display: block;
+            margin-top: 3px;
+            color: #84998d;
+            font-size: 10px;
+        }
+
         /* =============================================
            BOARD + EVALUATION BAR
         ============================================= */
@@ -1422,6 +1507,99 @@ analyzeButton.addEventListener("click", async () => {
 // RENDER MAIN ANALYZER
 // ======================================================
 
+
+// ======================================================
+// CHESS.COM PLAYER AVATARS
+// ======================================================
+
+// PGN player tags sometimes contain a Chess.com username, but they can
+// also contain display names. Only try a lookup when the tag looks like
+// a username; never guess from a person's real/display name.
+function looksLikeChessComUsername(value) {
+    return /^[a-zA-Z0-9_-]{3,25}$/.test(String(value || "").trim());
+}
+
+function playerInitials(name) {
+    const parts = String(name || "Player").trim().split(/\s+/).filter(Boolean);
+    return (parts.length > 1
+        ? parts[0][0] + parts[parts.length - 1][0]
+        : (parts[0] || "P").slice(0, 2)).toUpperCase();
+}
+
+async function loadChessComPlayerCard(color, name, rating) {
+    const card = document.querySelector(`[data-player-card="${color}"]`);
+    if (!card) return;
+
+    const avatar = card.querySelector(".ca-player-avatar");
+    const fallback = card.querySelector(".ca-player-fallback");
+    const status = card.querySelector(".ca-player-status");
+    const nameLink = card.querySelector(".ca-player-name");
+
+    fallback.textContent = playerInitials(name);
+    fallback.hidden = false;
+    avatar.hidden = true;
+
+    if (!looksLikeChessComUsername(name)) {
+        status.textContent = "Avatar unavailable from PGN";
+        return;
+    }
+
+    status.textContent = "Looking up Chess.com profile…";
+
+    try {
+        const response = await fetch(
+            `https://api.chess.com/pub/player/${encodeURIComponent(name.trim())}`,
+            { headers: { "Accept": "application/json" } }
+        );
+
+        if (!response.ok) throw new Error("Profile lookup failed");
+
+        const profile = await response.json();
+        if (!profile || !profile.username) throw new Error("Profile not found");
+
+        const profileUsername = String(profile.username);
+        const profileUrl = `https://www.chess.com/member/${encodeURIComponent(profileUsername)}`;
+
+        nameLink.href = profileUrl;
+        nameLink.target = "_blank";
+        nameLink.rel = "noopener noreferrer";
+        nameLink.title = "Open Chess.com profile";
+
+        if (profile.avatar && typeof profile.avatar === "string") {
+            avatar.src = profile.avatar;
+            avatar.alt = `${name} Chess.com avatar`;
+            avatar.onload = () => {
+                avatar.hidden = false;
+                fallback.hidden = true;
+            };
+            avatar.onerror = () => {
+                avatar.hidden = true;
+                fallback.hidden = false;
+            };
+            status.textContent = "Chess.com profile";
+        } else {
+            status.textContent = "Profile found · no public avatar";
+        }
+    } catch (error) {
+        // GitHub Pages/browser cross-origin restrictions or a non-username
+        // PGN tag may prevent the public API lookup. Keep the fallback.
+        status.textContent = "Profile not available";
+    }
+}
+
+function loadChessComPlayerCards(headers) {
+    loadChessComPlayerCard(
+        "white",
+        headers.White || "White",
+        headers.WhiteElo || "Rating unavailable"
+    );
+    loadChessComPlayerCard(
+        "black",
+        headers.Black || "Black",
+        headers.BlackElo || "Rating unavailable"
+    );
+}
+
 function renderAnalyzer() {
 
     if (!gameData) {
@@ -1541,6 +1719,29 @@ function renderAnalyzer() {
                 <!-- ================================= -->
 
                 <div class="ca-board-area">
+
+                    <div class="ca-player-cards" aria-label="Game players">
+                        <div class="ca-player-card" data-player-card="black">
+                            <div class="ca-player-fallback" aria-hidden="true">B</div>
+                            <img class="ca-player-avatar" alt="" hidden>
+                            <div class="ca-player-copy">
+                                <span class="ca-player-color">Black</span>
+                                <a class="ca-player-name">Black</a>
+                                <span class="ca-player-rating">${escapeHtml(headers.BlackElo || "Rating unavailable")}</span>
+                                <span class="ca-player-status">Profile lookup not started</span>
+                            </div>
+                        </div>
+                        <div class="ca-player-card" data-player-card="white">
+                            <div class="ca-player-fallback" aria-hidden="true">W</div>
+                            <img class="ca-player-avatar" alt="" hidden>
+                            <div class="ca-player-copy">
+                                <span class="ca-player-color">White</span>
+                                <a class="ca-player-name">White</a>
+                                <span class="ca-player-rating">${escapeHtml(headers.WhiteElo || "Rating unavailable")}</span>
+                                <span class="ca-player-status">Profile lookup not started</span>
+                            </div>
+                        </div>
+                    </div>
 
                     <div class="ca-board-line">
 
@@ -1944,6 +2145,13 @@ function renderAnalyzer() {
 
         </div>
     `;
+
+    // Fill the player cards using the PGN tags and attempt public profile lookup.
+    const blackCard = document.querySelector('[data-player-card="black"]');
+    const whiteCard = document.querySelector('[data-player-card="white"]');
+    if (blackCard) blackCard.querySelector(".ca-player-name").textContent = headers.Black || "Black";
+    if (whiteCard) whiteCard.querySelector(".ca-player-name").textContent = headers.White || "White";
+    loadChessComPlayerCards(headers);
 
     renderMoveList();
     renderPosition();
