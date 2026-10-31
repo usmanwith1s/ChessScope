@@ -1,4 +1,4 @@
-Chess Analyzer — Third-Party Notices
+ChessScope — Third-Party Notices
 ====================================
 
 Stockfish.js 19 Lite single-threaded (JavaScript/WebAssembly)
