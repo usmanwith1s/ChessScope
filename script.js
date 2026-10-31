@@ -31,7 +31,7 @@ let engineGeneration = 0;
 const engineCache = new Map();
 
 // Keep full-game analysis responsive. Higher depths can take a long time per move.
-const ENGINE_DEPTH = 14;
+const ENGINE_DEPTH = 16;
 
 // ======================================================
 // HTML SAFETY
@@ -895,7 +895,11 @@ async function runAutomaticAnalysis() {
 
             if (i > 0) {
 
-                classifyMove(i);
+                await classifyMove(i);
+
+                if (runId !== analysisRunId) {
+                    return;
+                }
             }
 
             // ------------------------------------------------
@@ -1068,83 +1072,120 @@ function isEngineBestMove(before, after) {
     return playedUci === String(bestMove).toLowerCase();
 }
 
-function isApparentSoundSacrifice(after) {
-    // High-precision filter: do not call a move Brilliant merely because the
-    // opponent can capture the moved piece. Require a real piece sacrifice
-    // AND a concrete tactical payoff in Stockfish's principal variation.
-    const pvMoves = String(after.analysis?.pv || "")
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-    if (pvMoves.length < 3 || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(pvMoves[0])) {
-        return false;
-    }
+async function isSoundPieceSacrifice(before, after, moverBefore, moverAfter, pawnLoss) {
+    // A Brilliant/Spark candidate must first be a top or near-top engine move.
+    // The old detector required the engine PV to capture the piece and then
+    // recover material inside a short PV. That missed sound sacrifices whose
+    // opponent declines the capture, or whose compensation is positional.
+    const nearBest = after.bestMovePlayed || pawnLoss <= 0.18;
+    if (!nearBest || moverBefore >= 300 || moverAfter < -75) return false;
 
-    const movedPiece = new Chess(after.fen).get(after.to);
-    if (!movedPiece || !["n", "b", "r", "q"].includes(movedPiece.type)) {
-        return false; // pawn moves and promotions are not enough by themselves
-    }
-
-    const pieceValue = { p: 1, n: 3, b: 3, r: 5, q: 9 };
-    // PGN parsing stores playedMove.color in after.side, so this is the
-    // color that made the candidate move (not the side-to-move in the FEN).
-    const moverColor = after.side;
-    let chess;
+    let position;
     try {
-        chess = new Chess(after.fen);
+        position = new Chess(after.fen);
     } catch (error) {
         return false;
     }
 
-    let sacrificeWasTaken = false;
-    let materialBalance = 0; // positive means the original mover gained material
-    let foundTacticalPayoff = false;
-
-    // Replay a short section of the engine PV. We only accept a clear material
-    // recovery or a forced mate in the line; positional compensation alone is
-    // deliberately not enough for this first-pass Brilliant detector.
-    for (const uci of pvMoves.slice(0, 8)) {
-        if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)) break;
-        const from = uci.slice(0, 2);
-        const to = uci.slice(2, 4);
-        const promotion = uci[4];
-        let move;
-        try {
-            move = chess.move({ from, to, promotion });
-        } catch (error) {
-            return false;
-        }
-        if (!move) return false;
-
-        if (move.color !== moverColor && move.to === after.to && move.captured) {
-            sacrificeWasTaken = true;
-            materialBalance -= pieceValue[move.captured] || 0;
-        } else if (move.captured) {
-            const value = pieceValue[move.captured] || 0;
-            materialBalance += move.color === moverColor ? value : -value;
-        }
-
-        if (move.color === moverColor && move.san.endsWith("#")) {
-            foundTacticalPayoff = true;
-            break;
-        }
-
-        // Ignore the line before the alleged sacrifice is actually taken.
-        if (sacrificeWasTaken && materialBalance >= 0) {
-            foundTacticalPayoff = true;
-            break;
-        }
-
+    const movedPiece = position.get(after.to);
+    if (!movedPiece || !["n", "b", "r", "q"].includes(movedPiece.type)) {
+        return false;
     }
 
-    return sacrificeWasTaken && foundTacticalPayoff;
+    // A genuine piece sacrifice gives the opponent a legal way to take the
+    // newly moved piece. Test those capture continuations with Stockfish,
+    // rather than relying on a short principal-variation string heuristic.
+    const moverColor = after.side;
+
+    // First inspect Stockfish's full continuation. Sometimes the opponent
+    // cannot take the offered piece immediately because they must answer a
+    // check or another forcing move first.
+    const pvMoves = String(after.analysis?.pv || "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+    const pvPosition = new Chess(after.fen);
+    for (const uci of pvMoves.slice(0, 10)) {
+        if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)) break;
+        let pvMove;
+        try {
+            pvMove = pvPosition.move({
+                from: uci.slice(0, 2),
+                to: uci.slice(2, 4),
+                promotion: uci[4]
+            });
+        } catch (error) {
+            break;
+        }
+        if (!pvMove) break;
+        if (
+            pvMove.color !== moverColor &&
+            pvMove.to === after.to &&
+            pvMove.captured === movedPiece.type
+        ) {
+            // The engine's best reply accepts the sacrifice, while its
+            // evaluation still says the sacrificing side is doing fine.
+            return moverAfter >= -75;
+        }
+        if (pvMove.color === moverColor && pvMove.from === after.to) {
+            break;
+        }
+    }
+
+    const captures = position.moves({ verbose: true }).filter(move =>
+        move.to === after.to && move.captured === movedPiece.type
+    );
+
+    if (!captures.length) return false;
+
+    const validationDepth = Math.max(12, ENGINE_DEPTH - 2);
+
+    for (const capture of captures.slice(0, 3)) {
+        try {
+            const capturePosition = new Chess(after.fen);
+            const madeCapture = capturePosition.move({
+                from: capture.from,
+                to: capture.to,
+                promotion: capture.promotion
+            });
+            if (!madeCapture) continue;
+
+            const captureFen = capturePosition.fen();
+            const captureAnalysis = await evaluateFen(captureFen, validationDepth);
+            const captureWhiteScore = scoreFromWhitePerspective(
+                captureAnalysis.evaluation,
+                captureFen
+            );
+            if (captureWhiteScore === null) continue;
+
+            const moverAfterCapture = moverColor === "w"
+                ? captureWhiteScore
+                : -captureWhiteScore;
+
+            // The opponent can take the offered piece, yet the player who
+            // sacrificed it is not left in a clearly bad position. Allow a
+            // little search noise, but reject simple hanging-piece blunders.
+            if (
+                moverAfterCapture >= -75 &&
+                moverAfterCapture >= moverAfter - 110
+            ) {
+                return true;
+            }
+        } catch (error) {
+            // If an optional sacrifice-validation search fails, fall back to
+            // the ordinary classification rather than failing the whole game.
+            continue;
+        }
+    }
+
+    return false;
 }
 
 // ======================================================
 // CLASSIFY MOVE
 // ======================================================
 
-function classifyMove(index) {
+async function classifyMove(index) {
     const after = gameData.positions[index];
     const before = gameData.positions[index - 1];
     if (!before.analysis || !after.analysis) return;
@@ -1153,54 +1194,57 @@ function classifyMove(index) {
     const afterScore = after.analysis.whiteScore;
     if (beforeScore === null || afterScore === null) return;
 
-    // Engine scores are stored from White's perspective. Convert both
-    // positions to the perspective of the player who made this move.
+    // Evaluations are converted to the perspective of the player who made
+    // this move. Comparing the best evaluation before and after the played
+    // move gives an engine-estimated centipawn loss (CPL).
     const moverBefore = after.side === "w" ? beforeScore : -beforeScore;
     const moverAfter = after.side === "w" ? afterScore : -afterScore;
     const pawnLoss = Math.max(0, moverBefore - moverAfter) / 100;
+    const centipawnLoss = pawnLoss * 100;
 
-    // Centipawns are not equally meaningful in winning and equal positions.
-    // Convert both evaluations to expected-score percentages before grading.
+    // Keep the expected-points estimate for the accuracy display only. The
+    // move label itself uses centipawn loss, as Chessigma publicly describes
+    // its broad grading approach; its exact thresholds are not public.
     const expectedBefore = scoreToExpectedScore(moverBefore);
     const expectedAfter = scoreToExpectedScore(moverAfter);
     const expectedPointsLoss = Math.max(0, expectedBefore - expectedAfter);
 
-    after.loss = pawnLoss; // Keep the familiar pawn-loss display.
+    after.loss = pawnLoss;
+    after.centipawnLoss = centipawnLoss;
     after.expectedPointsLoss = expectedPointsLoss;
     after.accuracy = lossToAccuracy(expectedPointsLoss);
 
     const bestMove = isEngineBestMove(before, after);
+    after.bestMovePlayed = bestMove;
     const bookMove = isKnownBookMove(index);
-    const brilliantCandidate = bestMove && isApparentSoundSacrifice(after);
-    // Great is an intentionally rare heuristic: a top-engine response that
-    // correctly capitalizes on an opponent mistake/blunder while holding a
-    // clear advantage. This is not Chess.com's private critical-move logic.
+
+    const brilliantCandidate = await isSoundPieceSacrifice(
+        before,
+        after,
+        moverBefore,
+        moverAfter,
+        pawnLoss
+    );
+
+    // Great is reserved for a precise move that converts an opponent's
+    // serious error into a clear advantage. It is separate from the sacrifice
+    // test used for Brilliant/Spark.
     const greatCandidate = bestMove &&
         ["Mistake", "Blunder"].includes(before.classification) &&
         moverBefore >= 150 &&
         moverAfter >= 150 &&
-        expectedPointsLoss <= 1.5;
+        centipawnLoss <= 15;
 
-    // A missed opportunity is only considered when the opponent's previous
-    // move was already marked as a mistake/blunder and this move gives away
-    // a meaningful part of the resulting advantage.
     const opponentErr = ["Mistake", "Blunder"].includes(before.classification);
     const missedOpportunity = opponentErr &&
         moverBefore >= 150 &&
-        expectedPointsLoss >= 5 &&
-        expectedPointsLoss <= 20 &&
+        moverAfter <= 0 &&
+        centipawnLoss >= 30 &&
         !bestMove;
 
     if (bookMove) {
         after.classification = "Book";
-    } else if (
-        brilliantCandidate &&
-        expectedPointsLoss <= 2 &&
-        moverBefore < 300 &&
-        moverAfter >= -100
-    ) {
-        // Deliberately conservative: a top engine move plus an apparent,
-        // sound piece sacrifice. This remains a heuristic, not Chess.com's code.
+    } else if (brilliantCandidate) {
         after.classification = "Brilliant";
     } else if (greatCandidate) {
         after.classification = "Great";
@@ -1209,29 +1253,26 @@ function classifyMove(index) {
     } else if (missedOpportunity) {
         after.classification = "Miss";
     } else {
-        after.classification = classifyExpectedPointsLoss(expectedPointsLoss);
+        after.classification = classifyCentipawnLoss(centipawnLoss);
     }
-
-    after.bestMovePlayed = bestMove;
 }
 
-// Map Stockfish centipawns to an expected-score percentage using the
-// published Lichess win-percentage curve. It is a useful public model, not
-// the private Chess.com rating-dependent Expected Points model.
+// Public information from Chessigma describes a centipawn-loss-based grade
+// scale, but does not publish its exact thresholds. These are ChessScope's
+// explicit, tunable thresholds and must be calibrated against real PGNs.
+function classifyCentipawnLoss(loss) {
+    if (loss <= 10) return "Excellent";
+    if (loss <= 25) return "Good";
+    if (loss <= 50) return "Inaccuracy";
+    if (loss <= 100) return "Mistake";
+    return "Blunder";
+}
+
+// Chessigma's precise accuracy formula is not public. This smooth score
+// mapping is retained for the separate accuracy estimate, not move labels.
 function scoreToExpectedScore(centipawns) {
     const cp = Math.max(-100000, Math.min(100000, Number(centipawns) || 0));
     return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1);
-}
-
-// Public Chess.com classification cutoffs are expressed as expected-points
-// loss. Here they are applied to this site's Lichess-inspired estimate, so
-// labels are consistent but are not promised to match Chess.com exactly.
-function classifyExpectedPointsLoss(loss) {
-    if (loss <= 2) return "Excellent";
-    if (loss <= 5) return "Good";
-    if (loss <= 10) return "Inaccuracy";
-    if (loss <= 20) return "Mistake";
-    return "Blunder";
 }
 
 // ======================================================
@@ -2337,9 +2378,11 @@ function renderPosition() {
                     position.to
             ) {
 
-                square.classList.add(
-                    "ca-last-to"
-                );
+                square.classList.add("ca-last-to");
+                const moveGradeClass = position.classification
+                    ? `ca-last-to-${String(position.classification).toLowerCase()}`
+                    : "ca-last-to-pending";
+                square.classList.add(moveGradeClass);
             }
 
             // ------------------------------------------------
