@@ -17,6 +17,9 @@ let currentPosition = 0;
 let autoplayTimer = null;
 let soundsEnabled = true;
 let soundAudioContext = null;
+let gameEndCuePlayed = false;
+let lastBoardAnimationSignature = "";
+let woodNoiseBuffer = null;
 
 // ======================================================
 // STOCKFISH
@@ -74,7 +77,7 @@ const CLASSIFICATION_PRESENTATION = {
     Good:       { label: "Sound",            icon: "●", description: "A sensible move with limited evaluation loss." },
     Inaccuracy: { label: "Slip",             icon: "↘", description: "A small loss of advantage or precision." },
     Mistake:    { label: "Error",            icon: "!", description: "A meaningful evaluation loss." },
-    Miss:       { label: "Missed chance",    icon: "◎", description: "A significant opportunity was not taken." },
+    Miss:       { label: "Missed",            icon: "◎", description: "A significant opportunity was not taken." },
     Blunder:    { label: "Breakdown",        icon: "⚡", description: "A major loss of evaluation." }
 };
 
@@ -444,6 +447,9 @@ analyzeButton.addEventListener("click", async () => {
     // ==================================================
     // SAVE GAME
     // ==================================================
+
+    gameEndCuePlayed = false;
+    lastBoardAnimationSignature = "";
 
     gameData = {
 
@@ -1072,108 +1078,130 @@ function isEngineBestMove(before, after) {
     return playedUci === String(bestMove).toLowerCase();
 }
 
-async function isSoundPieceSacrifice(before, after, moverBefore, moverAfter, pawnLoss) {
-    // A Brilliant/Spark candidate must first be a top or near-top engine move.
-    // The old detector required the engine PV to capture the piece and then
-    // recover material inside a short PV. That missed sound sacrifices whose
-    // opponent declines the capture, or whose compensation is positional.
-    const nearBest = after.bestMovePlayed || pawnLoss <= 0.18;
-    if (!nearBest || moverBefore >= 300 || moverAfter < -75) return false;
+function materialValue(pieceType) {
+    return ({ p: 1, n: 3, b: 3, r: 5, q: 9, k: 99 })[String(pieceType || "").toLowerCase()] || 0;
+}
 
-    let position;
+function getPlayedUci(position) {
+    if (!position || !position.from || !position.to) return "";
+    return `${position.from}${position.to}${position.promotion || ""}`.toLowerCase();
+}
+
+async function isSoundPieceSacrifice(before, after, moverBefore, moverAfter, pawnLoss) {
+    /*
+     * Spark is deliberately rare. We check the four practical gates described
+     * in Chessigma's public Brilliant benchmark: the move must be chosen (not
+     * forced), involve a real material offer, survive acceptance, and not be
+     * a decorative move in an already completely won position.
+     *
+     * This is ChessScope's independent detector, not Chessigma's private code.
+     */
+    let beforePosition;
+    let afterPosition;
     try {
-        position = new Chess(after.fen);
+        beforePosition = new Chess(before.fen);
+        afterPosition = new Chess(after.fen);
     } catch (error) {
         return false;
     }
 
-    const movedPiece = position.get(after.to);
-    if (!movedPiece || !["n", "b", "r", "q"].includes(movedPiece.type)) {
+    // A move made while in check is a forced defensive response, not a Spark.
+    if (beforePosition.in_check()) return false;
+    if (beforePosition.moves().length < 2) return false;
+
+    // A brilliant badge should not simply decorate a routine move in a
+    // completely winning position (the "victory lap" false-positive gate).
+    if (moverBefore > 350) return false;
+
+    // Inspect every legal capture the opponent could make after the move.
+    // This includes the moved piece and an indirectly exposed piece, which
+    // catches more than the old "capture the piece that just moved" test.
+    const offers = afterPosition.moves({ verbose: true })
+        .filter(move => move.captured && materialValue(move.captured) >= 3)
+        .sort((a, b) => {
+            const aMoved = a.to === after.to ? 1 : 0;
+            const bMoved = b.to === after.to ? 1 : 0;
+            return bMoved - aMoved || materialValue(b.captured) - materialValue(a.captured);
+        });
+
+    if (!offers.length) return false;
+
+    // Only deepen positions that have a plausible significant offer. A
+    // rook/queen offer is retained as a candidate even if the first shallow
+    // search called it a large loss; this is important for tactical sacs.
+    const obviousOffer = offers.some(move =>
+        move.to === after.to || materialValue(move.captured) >= 5
+    );
+    if (!after.bestMovePlayed && pawnLoss > 2.5 && !obviousOffer) return false;
+
+    let deepBefore;
+    let deepAfter;
+    try {
+        const verifyDepth = Math.min(22, ENGINE_DEPTH + 2);
+        deepBefore = await evaluateFen(before.fen, verifyDepth);
+        deepAfter = await evaluateFen(after.fen, verifyDepth);
+    } catch (error) {
+        // Do not award Spark if the deeper verification could not complete.
         return false;
     }
 
-    // A genuine piece sacrifice gives the opponent a legal way to take the
-    // newly moved piece. Test those capture continuations with Stockfish,
-    // rather than relying on a short principal-variation string heuristic.
-    const moverColor = after.side;
+    const deepBeforeWhite = scoreFromWhitePerspective(deepBefore.evaluation, before.fen);
+    const deepAfterWhite = scoreFromWhitePerspective(deepAfter.evaluation, after.fen);
+    if (deepBeforeWhite === null || deepAfterWhite === null) return false;
 
-    // First inspect Stockfish's full continuation. Sometimes the opponent
-    // cannot take the offered piece immediately because they must answer a
-    // check or another forcing move first.
-    const pvMoves = String(after.analysis?.pv || "")
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-    const pvPosition = new Chess(after.fen);
-    for (const uci of pvMoves.slice(0, 10)) {
-        if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(uci)) break;
-        let pvMove;
+    const deepMoverBefore = after.side === "w" ? deepBeforeWhite : -deepBeforeWhite;
+    const deepMoverAfter = after.side === "w" ? deepAfterWhite : -deepAfterWhite;
+    const deepLoss = Math.max(0, deepMoverBefore - deepMoverAfter) / 100;
+    const playedUci = getPlayedUci(after);
+    const deepBestMove = String(deepBefore.bestMove || "").toLowerCase();
+    const deepBestPlayed = !!playedUci && playedUci === deepBestMove;
+
+    // The played move must be the deeper engine choice or remain very close
+    // to it. This avoids calling a merely attractive but unsound sacrifice.
+    if (!deepBestPlayed && deepLoss > 0.30) return false;
+    if (deepMoverAfter < -100) return false;
+
+    // Check up to two most relevant accepted-sacrifice continuations with
+    // Stockfish. The turn after the opponent captures belongs to the player
+    // who made the sacrifice, so scores are compared from that player's view.
+    for (const offer of offers.slice(0, 2)) {
         try {
-            pvMove = pvPosition.move({
-                from: uci.slice(0, 2),
-                to: uci.slice(2, 4),
-                promotion: uci[4]
+            const accepted = new Chess(after.fen);
+            const capture = accepted.move({
+                from: offer.from,
+                to: offer.to,
+                promotion: offer.promotion
             });
-        } catch (error) {
-            break;
-        }
-        if (!pvMove) break;
-        if (
-            pvMove.color !== moverColor &&
-            pvMove.to === after.to &&
-            pvMove.captured === movedPiece.type
-        ) {
-            // The engine's best reply accepts the sacrifice, while its
-            // evaluation still says the sacrificing side is doing fine.
-            return moverAfter >= -75;
-        }
-        if (pvMove.color === moverColor && pvMove.from === after.to) {
-            break;
-        }
-    }
+            if (!capture) continue;
 
-    const captures = position.moves({ verbose: true }).filter(move =>
-        move.to === after.to && move.captured === movedPiece.type
-    );
-
-    if (!captures.length) return false;
-
-    const validationDepth = Math.max(12, ENGINE_DEPTH - 2);
-
-    for (const capture of captures.slice(0, 3)) {
-        try {
-            const capturePosition = new Chess(after.fen);
-            const madeCapture = capturePosition.move({
-                from: capture.from,
-                to: capture.to,
-                promotion: capture.promotion
-            });
-            if (!madeCapture) continue;
-
-            const captureFen = capturePosition.fen();
-            const captureAnalysis = await evaluateFen(captureFen, validationDepth);
-            const captureWhiteScore = scoreFromWhitePerspective(
-                captureAnalysis.evaluation,
-                captureFen
+            const captureAnalysis = await evaluateFen(
+                accepted.fen(),
+                Math.max(15, ENGINE_DEPTH - 1)
             );
-            if (captureWhiteScore === null) continue;
+            const captureWhite = scoreFromWhitePerspective(
+                captureAnalysis.evaluation,
+                accepted.fen()
+            );
+            if (captureWhite === null) continue;
 
-            const moverAfterCapture = moverColor === "w"
-                ? captureWhiteScore
-                : -captureWhiteScore;
+            const moverAfterCapture = after.side === "w" ? captureWhite : -captureWhite;
+            const captureIsSound =
+                moverAfterCapture >= -100 &&
+                moverAfterCapture >= deepMoverAfter - 125;
 
-            // The opponent can take the offered piece, yet the player who
-            // sacrificed it is not left in a clearly bad position. Allow a
-            // little search noise, but reject simple hanging-piece blunders.
-            if (
-                moverAfterCapture >= -75 &&
-                moverAfterCapture >= moverAfter - 110
-            ) {
+            if (captureIsSound) {
+                after.sparkVerification = {
+                    deepBestPlayed,
+                    deepLoss,
+                    offeredPiece: offer.captured,
+                    offeredSquare: offer.to,
+                    acceptedScore: moverAfterCapture
+                };
                 return true;
             }
         } catch (error) {
-            // If an optional sacrifice-validation search fails, fall back to
-            // the ordinary classification rather than failing the whole game.
+            // Try the next exposed piece; no single optional search should
+            // abort the full game review.
             continue;
         }
     }
@@ -1194,17 +1222,12 @@ async function classifyMove(index) {
     const afterScore = after.analysis.whiteScore;
     if (beforeScore === null || afterScore === null) return;
 
-    // Evaluations are converted to the perspective of the player who made
-    // this move. Comparing the best evaluation before and after the played
-    // move gives an engine-estimated centipawn loss (CPL).
+    // Convert both scores to the perspective of the player who made this move.
     const moverBefore = after.side === "w" ? beforeScore : -beforeScore;
     const moverAfter = after.side === "w" ? afterScore : -afterScore;
     const pawnLoss = Math.max(0, moverBefore - moverAfter) / 100;
     const centipawnLoss = pawnLoss * 100;
 
-    // Keep the expected-points estimate for the accuracy display only. The
-    // move label itself uses centipawn loss, as Chessigma publicly describes
-    // its broad grading approach; its exact thresholds are not public.
     const expectedBefore = scoreToExpectedScore(moverBefore);
     const expectedAfter = scoreToExpectedScore(moverAfter);
     const expectedPointsLoss = Math.max(0, expectedBefore - expectedAfter);
@@ -1214,11 +1237,11 @@ async function classifyMove(index) {
     after.expectedPointsLoss = expectedPointsLoss;
     after.accuracy = lossToAccuracy(expectedPointsLoss);
 
-    const bestMove = isEngineBestMove(before, after);
+    let bestMove = isEngineBestMove(before, after);
     after.bestMovePlayed = bestMove;
     const bookMove = isKnownBookMove(index);
 
-    const brilliantCandidate = await isSoundPieceSacrifice(
+    const brilliantCandidate = bookMove ? false : await isSoundPieceSacrifice(
         before,
         after,
         moverBefore,
@@ -1226,14 +1249,17 @@ async function classifyMove(index) {
         pawnLoss
     );
 
-    // Great is reserved for a precise move that converts an opponent's
-    // serious error into a clear advantage. It is separate from the sacrifice
-    // test used for Brilliant/Spark.
-    const greatCandidate = bestMove &&
-        ["Mistake", "Blunder"].includes(before.classification) &&
-        moverBefore >= 150 &&
-        moverAfter >= 150 &&
-        centipawnLoss <= 15;
+    // Remove the previous false Masterstroke rule. It labelled almost any
+    // best reply after an opponent mistake as "Great". Masterstroke is now
+    // reserved for an engine-best move that either forces mate or finds a
+    // major defensive save from a clearly lost position.
+    const forcesMate = after.analysis.evaluation &&
+        after.analysis.evaluation.type === "mate" &&
+        Number(after.analysis.evaluation.value) < 0;
+    const defensiveSave = bestMove && moverBefore <= -350 &&
+        moverAfter > moverBefore + 200 &&
+        pawnLoss <= 0.25;
+    const greatCandidate = (bestMove && forcesMate) || defensiveSave;
 
     const opponentErr = ["Mistake", "Blunder"].includes(before.classification);
     const missedOpportunity = opponentErr &&
@@ -1246,6 +1272,11 @@ async function classifyMove(index) {
         after.classification = "Book";
     } else if (brilliantCandidate) {
         after.classification = "Brilliant";
+        // Deep verification may show that the depth-16 first pass missed the
+        // actual best move. Keep the confirmed result with the position.
+        if (after.sparkVerification && after.sparkVerification.deepBestPlayed) {
+            after.bestMovePlayed = true;
+        }
     } else if (greatCandidate) {
         after.classification = "Great";
     } else if (bestMove) {
@@ -2253,6 +2284,11 @@ function renderPosition() {
 
     const board =
         chess.board();
+    const isCheckmatePosition = typeof chess.in_checkmate === "function" && chess.in_checkmate();
+    const animationSignature = `${currentPosition}:${position.classification || "pending"}:${isCheckmatePosition ? "mate" : "live"}`;
+    const animateCurrentMove = currentPosition > 0 && animationSignature !== lastBoardAnimationSignature;
+    lastBoardAnimationSignature = animationSignature;
+    boardElement.classList.toggle("ca-board-checkmate", isCheckmatePosition);
 
     boardElement.innerHTML =
         "";
@@ -2397,6 +2433,9 @@ function renderPosition() {
                 square.classList.add(
                     "ca-check"
                 );
+                if (isCheckmatePosition) {
+                    square.classList.add("ca-checkmate-square");
+                }
             }
 
             // ------------------------------------------------
@@ -2470,6 +2509,18 @@ function renderPosition() {
                         piece.color,
                         piece.type
                     );
+
+                if (animateCurrentMove && position.to && squareName === position.to) {
+                    if (position.classification === "Brilliant") {
+                        pieceElement.classList.add("ca-piece-spark-animation");
+                    } else if (position.classification === "Great") {
+                        pieceElement.classList.add("ca-piece-masterstroke-animation");
+                    }
+                }
+
+                if (isCheckmatePosition && squareName === checkedKingSquare) {
+                    pieceElement.classList.add("ca-piece-checkmate-animation");
+                }
 
                 // --------------------------------------------
                 // MARK THE PIECE THAT JUST MOVED
@@ -2744,7 +2795,7 @@ function renderMoveList() {
 }
 
 // ======================================================
-// ORIGINAL SYNTHESIZED CHESS SOUNDS (no copied third-party audio)
+// ORIGINAL WOODEN-PIECE SOUNDS + GAME RESULT CUES
 // ======================================================
 
 function getSoundContext() {
@@ -2755,33 +2806,88 @@ function getSoundContext() {
     return soundAudioContext;
 }
 
-function playUiTone(kind = "move") {
-    if (!soundsEnabled) return;
-    const ctx = getSoundContext();
-    if (!ctx) return;
-    const now = ctx.currentTime;
-    const tones = kind === "check" ? [520, 390] : kind === "promotion" ? [540, 720, 900] : kind === "capture" ? [190, 125] : kind === "castle" ? [240, 330] : [220];
-    tones.forEach((frequency, index) => {
-        const start = now + index * (kind === "check" ? 0.075 : 0.045);
+function getWoodNoiseBuffer(ctx) {
+    if (woodNoiseBuffer && woodNoiseBuffer.sampleRate === ctx.sampleRate) return woodNoiseBuffer;
+    const length = Math.max(1, Math.floor(ctx.sampleRate * 0.12));
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) {
+        const t = i / ctx.sampleRate;
+        const envelope = Math.exp(-t * 78);
+        data[i] = (Math.random() * 2 - 1) * envelope;
+    }
+    woodNoiseBuffer = buffer;
+    return buffer;
+}
+
+function playWoodKnock(ctx, start, intensity = 1, pitch = 1) {
+    // A short filtered-noise impact plus inharmonic resonances creates an
+    // original wooden tap; it is not a copied Chessigma audio recording.
+    const source = ctx.createBufferSource();
+    source.buffer = getWoodNoiseBuffer(ctx);
+    const highCut = ctx.createBiquadFilter();
+    highCut.type = "lowpass";
+    highCut.frequency.setValueAtTime(2300 * pitch, start);
+    highCut.Q.setValueAtTime(0.7, start);
+    const body = ctx.createBiquadFilter();
+    body.type = "peaking";
+    body.frequency.setValueAtTime(620 * pitch, start);
+    body.Q.setValueAtTime(0.85, start);
+    body.gain.setValueAtTime(4, start);
+    const impactGain = ctx.createGain();
+    impactGain.gain.setValueAtTime(0.0001, start);
+    impactGain.gain.exponentialRampToValueAtTime(0.36 * intensity, start + 0.004);
+    impactGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.105);
+    source.connect(highCut);
+    highCut.connect(body);
+    body.connect(impactGain);
+    impactGain.connect(ctx.destination);
+    source.start(start);
+    source.stop(start + 0.115);
+
+    [[185 * pitch, 0.12], [315 * pitch, 0.075], [540 * pitch, 0.035]].forEach(([frequency, volume]) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         const filter = ctx.createBiquadFilter();
-        osc.type = kind === "promotion" ? "sine" : "triangle";
+        osc.type = "triangle";
         osc.frequency.setValueAtTime(frequency, start);
-        if (kind === "move" || kind === "capture") {
-            osc.frequency.exponentialRampToValueAtTime(Math.max(60, frequency * 0.58), start + 0.065);
-        }
         filter.type = "lowpass";
-        filter.frequency.setValueAtTime(kind === "capture" ? 1100 : 1800, start);
+        filter.frequency.setValueAtTime(1250, start);
         gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.exponentialRampToValueAtTime(kind === "promotion" ? 0.075 : 0.11, start + 0.008);
-        gain.gain.exponentialRampToValueAtTime(0.0001, start + (kind === "promotion" ? 0.14 : 0.085));
+        gain.gain.exponentialRampToValueAtTime(volume * intensity, start + 0.003);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.13);
         osc.connect(filter);
         filter.connect(gain);
         gain.connect(ctx.destination);
         osc.start(start);
-        osc.stop(start + (kind === "promotion" ? 0.15 : 0.095));
+        osc.stop(start + 0.14);
     });
+}
+
+function playUiTone(kind = "move") {
+    if (!soundsEnabled) return;
+    const ctx = getSoundContext();
+    if (!ctx) return;
+    const now = ctx.currentTime + 0.005;
+    if (kind === "move" || kind === "check") {
+        playWoodKnock(ctx, now, kind === "check" ? 1.1 : 1.0, kind === "check" ? 1.12 : 1);
+        if (kind === "check") playWoodKnock(ctx, now + 0.075, 0.42, 0.82);
+        return;
+    }
+    if (kind === "capture") {
+        playWoodKnock(ctx, now, 1.18, 0.82);
+        playWoodKnock(ctx, now + 0.065, 0.54, 0.70);
+        return;
+    }
+    if (kind === "castle") {
+        playWoodKnock(ctx, now, 0.9, 1.05);
+        playWoodKnock(ctx, now + 0.09, 0.78, 0.92);
+        return;
+    }
+    if (kind === "promotion") {
+        playWoodKnock(ctx, now, 1.25, 1.2);
+        playWoodKnock(ctx, now + 0.11, 0.8, 1.35);
+    }
 }
 
 function playMoveSound(position) {
@@ -2792,8 +2898,61 @@ function playMoveSound(position) {
     try {
         const chess = new Chess(position.fen);
         if (typeof chess.in_check === "function" && chess.in_check()) kind = "check";
-    } catch (error) { /* Keep the normal move sound if position parsing fails. */ }
+    } catch (error) { /* Keep the normal wooden tap if FEN parsing fails. */ }
     playUiTone(kind);
+}
+
+function getGameOutcome() {
+    if (!gameData) return null;
+    const result = gameData.headers && gameData.headers.Result;
+    if (result === "1-0") return "white-win";
+    if (result === "0-1") return "black-win";
+    if (result === "1/2-1/2") return "draw";
+
+    try {
+        const finalPosition = new Chess(gameData.finalFEN);
+        if (typeof finalPosition.in_checkmate === "function" && finalPosition.in_checkmate()) {
+            return finalPosition.turn() === "w" ? "black-win" : "white-win";
+        }
+        if (typeof finalPosition.in_stalemate === "function" && finalPosition.in_stalemate()) return "draw";
+    } catch (error) { /* An unfinished or malformed PGN has no end cue. */ }
+    return null;
+}
+
+function playGameEndSound() {
+    if (!soundsEnabled || gameEndCuePlayed) return;
+    const outcome = getGameOutcome();
+    if (!outcome) return;
+    const ctx = getSoundContext();
+    if (!ctx) return;
+    gameEndCuePlayed = true;
+    const now = ctx.currentTime + 0.18;
+
+    const playNote = (frequency, start, duration, peak, type = "sine") => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+        osc.type = type;
+        osc.frequency.setValueAtTime(frequency, start);
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(1700, start);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(peak, start + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + duration + 0.01);
+    };
+
+    if (outcome === "white-win") {
+        [523.25, 659.25, 783.99].forEach((note, i) => playNote(note, now + i * 0.12, 0.48, 0.13, "triangle"));
+    } else if (outcome === "black-win") {
+        [392.00, 311.13, 261.63].forEach((note, i) => playNote(note, now + i * 0.16, 0.52, 0.14, "triangle"));
+    } else {
+        [440, 349.23].forEach((note, i) => playNote(note, now + i * 0.16, 0.42, 0.10, "sine"));
+    }
 }
 
 // ======================================================
@@ -2824,9 +2983,13 @@ function goToPosition(index) {
 
     const previousPosition = currentPosition;
     currentPosition = index;
+    if (index === 0 && previousPosition > 0) gameEndCuePlayed = false;
 
     if (index === previousPosition + 1) {
         playMoveSound(gameData.positions[index]);
+    }
+    if (index === gameData.positions.length - 1 && previousPosition < index) {
+        playGameEndSound();
     }
 
     renderPosition();
@@ -2910,6 +3073,9 @@ function toggleAutoplay() {
                 currentPosition++;
 
                 playMoveSound(gameData.positions[currentPosition]);
+                if (currentPosition === gameData.positions.length - 1) {
+                    playGameEndSound();
+                }
                 renderPosition();
 
             },
