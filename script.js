@@ -31,7 +31,7 @@ let engineGeneration = 0;
 const engineCache = new Map();
 
 // Keep full-game analysis responsive. Higher depths can take a long time per move.
-const ENGINE_DEPTH = 12;
+const ENGINE_DEPTH = 14;
 
 // ======================================================
 // HTML SAFETY
@@ -51,1066 +51,47 @@ function escapeHtml(text) {
 // ======================================================
 
 function injectAnalyzerStyles() {
-
-    if (document.getElementById("chess-analyzer-styles")) {
-        return;
+    // All presentation now lives in review.css. Keep this compatibility hook
+    // because the analysis flow already calls it before rendering the report.
+    if (!document.getElementById("chess-analyzer-styles")) {
+        const style = document.createElement("style");
+        style.id = "chess-analyzer-styles";
+        style.textContent = "/* ChessScope review styles are loaded from review.css. */";
+        document.head.appendChild(style);
     }
-
-    const style = document.createElement("style");
-    style.id = "chess-analyzer-styles";
-
-    style.textContent = `
-
-        /* =============================================
-           MAIN
-        ============================================= */
-
-        .ca-wrapper {
-            width: 100%;
-            margin-top: 30px;
-        }
-
-        /* =============================================
-           GAME INFORMATION
-        ============================================= */
-
-        .ca-game-info {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-bottom: 22px;
-        }
-
-        .ca-info-card {
-            padding: 16px;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 14px;
-            background: rgba(255,255,255,0.04);
-        }
-
-        .ca-info-label {
-            display: block;
-            font-size: 12px;
-            opacity: 0.6;
-            margin-bottom: 5px;
-        }
-
-        .ca-info-value {
-            font-size: 16px;
-            font-weight: 700;
-            word-break: break-word;
-        }
-
-        /* =============================================
-           MAIN ANALYZER LAYOUT
-        ============================================= */
-
-        .ca-analyzer {
-            display: grid;
-            grid-template-columns:
-                minmax(280px, 600px)
-                minmax(300px, 1fr);
-
-            gap: 28px;
-            align-items: start;
-        }
-
-        .ca-board-area {
-            width: 100%;
-        }
-
-
-        /* =============================================
-           PLAYER PROFILE CARDS
-        ============================================= */
-
-        .ca-player-cards {
-            width: min(100%, 600px);
-            margin: 0 auto 14px;
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-        }
-
-        .ca-player-card {
-            min-width: 0;
-            display: flex;
-            align-items: center;
-            gap: 11px;
-            padding: 12px;
-            border: 1px solid rgba(255,255,255,0.09);
-            border-radius: 14px;
-            background: rgba(255,255,255,0.035);
-        }
-
-        .ca-player-avatar,
-        .ca-player-fallback {
-            width: 48px;
-            height: 48px;
-            flex: 0 0 48px;
-            border-radius: 50%;
-            object-fit: cover;
-            background: linear-gradient(135deg, #b6f7ca, #3e8d65);
-            color: #092016;
-        }
-
-        .ca-player-fallback {
-            display: grid;
-            place-items: center;
-            font-size: 16px;
-            font-weight: 800;
-        }
-
-        .ca-player-copy {
-            min-width: 0;
-        }
-
-        .ca-player-color {
-            display: block;
-            margin-bottom: 3px;
-            color: #9bb6a5;
-            font-size: 10px;
-            font-weight: 800;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-        }
-
-        .ca-player-name {
-            display: block;
-            overflow: hidden;
-            color: #f2f7f4;
-            font-size: 14px;
-            font-weight: 750;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            text-decoration: none;
-        }
-
-        .ca-player-name[href]:hover {
-            color: #a7f3c0;
-        }
-
-        .ca-player-rating {
-            display: block;
-            margin-top: 3px;
-            color: #a9bbb1;
-            font-size: 11px;
-        }
-
-        .ca-player-status {
-            display: block;
-            margin-top: 3px;
-            color: #84998d;
-            font-size: 10px;
-        }
-
-        /* =============================================
-           BOARD + EVALUATION BAR
-        ============================================= */
-
-        .ca-board-line {
-            width: min(100%, 600px);
-            margin: 0 auto;
-
-            display: grid;
-            grid-template-columns: 42px minmax(0, 1fr);
-
-            gap: 8px;
-            align-items: stretch;
-        }
-
-        .ca-board {
-            width: 100%;
-            aspect-ratio: 1 / 1;
-
-            display: grid;
-            grid-template-columns: repeat(8, 1fr);
-
-            border-radius: 14px;
-            overflow: hidden;
-
-            box-shadow:
-                0 18px 45px rgba(0,0,0,0.35);
-        }
-
-        /* =============================================
-           EVALUATION SIDEBAR
-        ============================================= */
-
-        .ca-eval-sidebar {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-
-            min-width: 0;
-        }
-
-        .ca-eval-label {
-            width: 100%;
-            margin-bottom: 7px;
-
-            text-align: center;
-
-            font-size: 9px;
-            font-weight: 900;
-
-            line-height: 1.2;
-
-            word-break: break-word;
-        }
-
-        .ca-eval-bar {
-            position: relative;
-
-            width: 100%;
-            height: 100%;
-
-            min-height: 300px;
-
-            border-radius: 8px;
-
-            overflow: hidden;
-
-            background: #202020;
-
-            border:
-                1px solid rgba(255,255,255,0.15);
-
-            box-shadow:
-                inset 0 0 12px rgba(0,0,0,0.28);
-        }
-
-        /*
-           White occupies the bottom.
-           Height changes according to evaluation.
-        */
-
-        .ca-eval-bar-fill {
-            position: absolute;
-
-            left: 0;
-            bottom: 0;
-
-            width: 100%;
-            height: 50%;
-
-            background: #f2f2f2;
-
-            transition:
-                height 0.35s ease;
-        }
-
-        .ca-eval-bar-top,
-        .ca-eval-bar-bottom {
-            position: absolute;
-
-            left: 0;
-
-            width: 100%;
-
-            z-index: 5;
-
-            text-align: center;
-
-            font-size: 7px;
-            font-weight: 900;
-
-            pointer-events: none;
-        }
-
-        .ca-eval-bar-top {
-            top: 5px;
-            color: #ffffff;
-        }
-
-        .ca-eval-bar-bottom {
-            bottom: 5px;
-            color: #111111;
-        }
-
-        .ca-eval-zero {
-            position: absolute;
-
-            top: 50%;
-            left: 0;
-
-            width: 100%;
-            height: 2px;
-
-            z-index: 4;
-
-            background:
-                rgba(110,110,110,0.75);
-
-            pointer-events: none;
-        }
-
-        /* =============================================
-           BOARD SQUARES
-        ============================================= */
-
-        .ca-square {
-            position: relative;
-
-            aspect-ratio: 1 / 1;
-
-            display: flex;
-            align-items: center;
-            justify-content: center;
-
-            user-select: none;
-        }
-
-        .ca-light {
-            background: #e7edf2;
-        }
-
-        .ca-dark {
-            background: #547c68;
-        }
-
-        /* =============================================
-           CHESS PIECES
-        ============================================= */
-
-        .ca-piece {
-            position: relative;
-            display: inline-block;
-
-            font-family:
-                "Segoe UI Symbol",
-                "Noto Sans Symbols 2",
-                "Arial Unicode MS",
-                sans-serif;
-
-            font-size:
-                clamp(28px, 6vw, 58px);
-
-            line-height: 1;
-
-            filter:
-                drop-shadow(
-                    0 3px 2px rgba(0,0,0,0.30)
-                );
-
-            z-index: 2;
-        }
-
-        .ca-piece-white {
-            color: #ffffff;
-            -webkit-text-stroke: 1.2px #24313b;
-            text-shadow:
-                0 2px 0 #aeb9c2,
-                0 4px 5px rgba(0,0,0,0.45);
-        }
-
-        .ca-piece-black {
-            color: #17212a;
-            -webkit-text-stroke: 1.1px #f5f7fa;
-            text-shadow:
-                0 2px 0 rgba(255,255,255,0.35),
-                0 4px 5px rgba(0,0,0,0.45);
-        }
-
-        /* =============================================
-           LAST MOVE HIGHLIGHT
-        ============================================= */
-
-        .ca-last-from {
-            box-shadow:
-                inset 0 0 0 5px
-                rgba(255,235,59,0.40);
-        }
-
-        .ca-last-to {
-            box-shadow:
-                inset 0 0 0 5px
-                rgba(255,235,59,0.75);
-        }
-
-        /*
-           Small glowing sign on the piece that
-           just moved.
-        */
-
-        .ca-move-marker {
-            position: absolute;
-
-            top: -7px;
-            right: -8px;
-
-            width: 11px;
-            height: 11px;
-
-            display: flex;
-            align-items: center;
-            justify-content: center;
-
-            border-radius: 50%;
-
-            background: #ffd737;
-
-            border:
-                2px solid #ffffff;
-
-            box-shadow:
-                0 0 0 3px
-                rgba(255,215,55,0.22),
-
-                0 0 12px
-                rgba(255,215,55,0.90);
-
-            z-index: 20;
-        }
-
-        .ca-move-marker::after {
-            content: "";
-
-            width: 4px;
-            height: 4px;
-
-            border-radius: 50%;
-
-            background: #ffffff;
-        }
-
-        /* =============================================
-           CHECK
-        ============================================= */
-
-        .ca-check {
-            box-shadow:
-                inset 0 0 0 6px
-                rgba(255,70,70,0.85);
-        }
-
-        /* =============================================
-           COORDINATES
-        ============================================= */
-
-        .ca-coordinate {
-            position: absolute;
-
-            font-size: 10px;
-            font-weight: 700;
-
-            opacity: 0.6;
-
-            z-index: 3;
-        }
-
-        .ca-file {
-            bottom: 4px;
-            left: 5px;
-        }
-
-        .ca-rank {
-            top: 4px;
-            right: 5px;
-        }
-
-        .ca-board-caption {
-            margin-top: 12px;
-
-            text-align: center;
-
-            opacity: 0.75;
-
-            font-size: 14px;
-        }
-
-        /* =============================================
-           CONTROLS
-        ============================================= */
-
-        .ca-controls {
-            display: flex;
-            flex-wrap: wrap;
-
-            gap: 8px;
-
-            margin-top: 18px;
-        }
-
-        .ca-control {
-            border:
-                1px solid rgba(255,255,255,0.10);
-
-            background:
-                rgba(255,255,255,0.06);
-
-            color: inherit;
-
-            border-radius: 9px;
-
-            padding: 9px 13px;
-
-            cursor: pointer;
-
-            font-weight: 700;
-
-            transition:
-                background 0.15s ease,
-                transform 0.15s ease;
-        }
-
-        .ca-control:hover {
-            background:
-                rgba(255,255,255,0.11);
-
-            transform: translateY(-1px);
-        }
-
-        .ca-control:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        /* =============================================
-           RIGHT PANEL
-        ============================================= */
-
-        .ca-panel {
-            min-width: 0;
-
-            padding: 20px;
-
-            border-radius: 18px;
-
-            border:
-                1px solid rgba(255,255,255,0.08);
-
-            background:
-                rgba(255,255,255,0.04);
-        }
-
-        .ca-panel-title {
-            margin: 0 0 14px;
-
-            font-size: 21px;
-        }
-
-        /* =============================================
-           STATUS
-        ============================================= */
-
-        .ca-engine-status {
-            margin-top: 10px;
-            padding: 11px 13px;
-            border-radius: 10px;
-            background: rgba(255,255,255,0.04);
-            font-size: 13px;
-            line-height: 1.45;
-        }
-
-        .ca-engine-status[data-classification="Brilliant"] { border-left: 3px solid #45d8c5; }
-        .ca-engine-status[data-classification="Great"] { border-left: 3px solid #7ab7ff; }
-        .ca-engine-status[data-classification="Best"] { border-left: 3px solid #a9d34f; }
-        .ca-engine-status[data-classification="Excellent"] { border-left: 3px solid #6bd15c; }
-        .ca-engine-status[data-classification="Good"] { border-left: 3px solid #8bb89b; }
-        .ca-engine-status[data-classification="Book"] { border-left: 3px solid #b6a0ff; }
-        .ca-engine-status[data-classification="Blunder"],
-        .ca-engine-status[data-classification="Miss"] { border-left: 3px solid #ff5555; }
-
-        /* =============================================
-           PROGRESS
-        ============================================= */
-
-        .ca-progress-box {
-            margin-bottom: 15px;
-        }
-
-        .ca-progress-track {
-            width: 100%;
-            height: 8px;
-
-            margin-top: 8px;
-
-            overflow: hidden;
-
-            border-radius: 999px;
-
-            background:
-                rgba(255,255,255,0.08);
-        }
-
-        .ca-progress-fill {
-            width: 0%;
-            height: 100%;
-
-            border-radius: 999px;
-
-            background:
-                linear-gradient(
-                    90deg,
-                    #44d07a,
-                    #80e8ff
-                );
-
-            transition:
-                width 0.18s ease;
-        }
-
-        /* =============================================
-           CURRENT MOVE
-        ============================================= */
-
-        .ca-current-move {
-            padding: 14px 16px;
-
-            margin-top: 15px;
-
-            margin-bottom: 14px;
-
-            border-radius: 12px;
-
-            background:
-                rgba(255,255,255,0.05);
-        }
-
-        .ca-current-move-label {
-            font-size: 12px;
-
-            opacity: 0.6;
-
-            margin-bottom: 5px;
-        }
-
-        .ca-current-move-value {
-            font-size: 21px;
-
-            font-weight: 800;
-        }
-
-        /* =============================================
-           ENGINE STATS
-        ============================================= */
-
-        .ca-engine-grid {
-            display: grid;
-
-            grid-template-columns:
-                repeat(2, minmax(0, 1fr));
-
-            gap: 10px;
-
-            margin-top: 12px;
-        }
-
-        .ca-engine-stat {
-            padding: 13px;
-
-            border-radius: 11px;
-
-            background:
-                rgba(255,255,255,0.035);
-        }
-
-        .ca-engine-stat-label {
-            display: block;
-
-            font-size: 11px;
-
-            opacity: 0.55;
-
-            margin-bottom: 4px;
-        }
-
-        .ca-engine-stat-value {
-            display: block;
-
-            font-size: 17px;
-
-            font-weight: 800;
-
-            word-break: break-word;
-        }
-
-        /* =============================================
-           EVALUATION GRAPH
-        ============================================= */
-
-        .ca-evaluation {
-            margin-top: 16px;
-
-            overflow: hidden;
-
-            border-radius: 14px;
-
-            border:
-                1px solid rgba(255,255,255,0.08);
-        }
-
-        .ca-evaluation-header {
-            padding: 12px 14px;
-
-            background:
-                rgba(255,255,255,0.05);
-
-            font-weight: 800;
-        }
-
-        #ca-eval-graph {
-            display: block;
-
-            width: 100%;
-            height: 180px;
-
-            background: #15181d;
-        }
-
-        /* =============================================
-           ACCURACY
-        ============================================= */
-
-        .ca-accuracy-grid {
-            display: grid;
-
-            grid-template-columns:
-                repeat(2, minmax(0,1fr));
-
-            gap: 10px;
-
-            margin-top: 15px;
-        }
-
-        .ca-accuracy-card {
-            padding: 16px;
-
-            border-radius: 14px;
-
-            background:
-                rgba(255,255,255,0.045);
-
-            text-align: center;
-        }
-
-        .ca-accuracy-player {
-            font-size: 13px;
-
-            opacity: 0.65;
-        }
-
-        .ca-accuracy-value {
-            display: block;
-
-            margin-top: 5px;
-
-            font-size: 30px;
-
-            font-weight: 900;
-        }
-
-        /* =============================================
-           MOVE COUNTS
-        ============================================= */
-
-        .ca-count-grid {
-            display: grid;
-
-            grid-template-columns:
-                repeat(2,minmax(0,1fr));
-
-            gap: 8px;
-
-            margin-top: 10px;
-        }
-
-        .ca-count-row {
-            display: flex;
-
-            justify-content: space-between;
-
-            padding: 9px 10px;
-
-            border-radius: 9px;
-
-            background:
-                rgba(255,255,255,0.035);
-
-            font-size: 13px;
-        }
-
-        .ca-count-left {
-            opacity: 0.72;
-        }
-
-        .ca-count-right {
-            font-weight: 800;
-        }
-
-        /* =============================================
-           MOVE COLORS
-        ============================================= */
-
-        .ca-best {
-            color: #9bdc4e;
-        }
-
-        .ca-excellent {
-            color: #72d45c;
-        }
-
-        .ca-good {
-            color: #8bb89b;
-        }
-
-        .ca-inaccuracy {
-            color: #ffd23c;
-        }
-
-        .ca-mistake {
-            color: #ff9b44;
-        }
-
-        .ca-blunder { color: #ff5555; }
-        .ca-brilliant { color: #45d8c5; }
-        .ca-great { color: #7ab7ff; }
-        .ca-book { color: #b6a0ff; }
-        .ca-miss { color: #ff7474; }
-
-        .ca-move-badge {
-            display: inline-block;
-            margin-left: 6px;
-            padding: 2px 5px;
-            border-radius: 5px;
-            font-size: 10px;
-            font-weight: 800;
-            vertical-align: middle;
-            background: rgba(255,255,255,0.07);
-            color: rgba(255,255,255,0.82);
-        }
-
-        .ca-move-badge:empty { display: none; }
-        .ca-move-button[data-classification="Brilliant"] { border-color: rgba(69,216,197,0.75); }
-        .ca-move-button[data-classification="Great"] { border-color: rgba(122,183,255,0.75); }
-        .ca-move-button[data-classification="Book"] { border-color: rgba(182,160,255,0.65); }
-        .ca-move-button[data-classification="Miss"] { border-color: rgba(255,116,116,0.75); }
-
-        .ca-current-classification {
-            display: inline-flex;
-            align-items: center;
-            margin-top: 9px;
-            padding: 5px 9px;
-            border-radius: 7px;
-            font-size: 12px;
-            font-weight: 800;
-            background: rgba(255,255,255,0.07);
-            color: rgba(255,255,255,0.82);
-        }
-
-        /* =============================================
-           MOVE LIST
-        ============================================= */
-
-        .ca-move-list {
-            display: flex;
-
-            flex-wrap: wrap;
-
-            gap: 7px;
-
-            max-height: 290px;
-
-            overflow-y: auto;
-
-            padding-right: 4px;
-
-            margin-top: 10px;
-        }
-
-        .ca-move-button {
-            border:
-                1px solid rgba(255,255,255,0.09);
-
-            background:
-                rgba(255,255,255,0.035);
-
-            color: inherit;
-
-            border-radius: 8px;
-
-            padding: 7px 9px;
-
-            cursor: pointer;
-
-            font-size: 13px;
-
-            transition:
-                0.15s ease;
-        }
-
-        .ca-move-button:hover {
-            transform: translateY(-1px);
-
-            background:
-                rgba(255,255,255,0.08);
-        }
-
-        .ca-move-button.ca-active {
-            outline:
-                2px solid rgba(120,255,140,0.70);
-
-            background:
-                rgba(80,220,100,0.13);
-        }
-
-        .ca-move-number {
-            opacity: 0.55;
-
-            margin-right: 4px;
-        }
-
-        .ca-move-button[data-classification="Best"] {
-            border-color:
-                rgba(150,220,60,0.55);
-        }
-
-        .ca-move-button[data-classification="Excellent"] {
-            border-color:
-                rgba(100,210,80,0.45);
-        }
-
-        .ca-move-button[data-classification="Good"] {
-            border-color:
-                rgba(100,180,120,0.35);
-        }
-
-        .ca-move-button[data-classification="Inaccuracy"] {
-            border-color:
-                rgba(255,205,60,0.60);
-        }
-
-        .ca-move-button[data-classification="Mistake"] {
-            border-color:
-                rgba(255,145,60,0.65);
-        }
-
-        .ca-move-button[data-classification="Blunder"] {
-            border-color:
-                rgba(255,65,65,0.70);
-        }
-
-        /* =============================================
-           FEN
-        ============================================= */
-
-        .ca-fen-box {
-            margin-top: 15px;
-        }
-
-        .ca-fen-label {
-            display: block;
-
-            font-size: 12px;
-
-            opacity: 0.6;
-
-            margin-bottom: 7px;
-        }
-
-        .ca-fen {
-            display: block;
-
-            width: 100%;
-
-            box-sizing: border-box;
-
-            padding: 10px 12px;
-
-            border-radius: 9px;
-
-            border:
-                1px solid rgba(255,255,255,0.08);
-
-            background:
-                rgba(0,0,0,0.20);
-
-            color: inherit;
-
-            font-size: 12px;
-
-            word-break: break-all;
-        }
-
-        /* =============================================
-           NOTE
-        ============================================= */
-
-        .ca-analysis-note {
-            margin-top: 14px;
-
-            font-size: 11px;
-
-            opacity: 0.5;
-
-            line-height: 1.5;
-        }
-
-        /* =============================================
-           RESPONSIVE
-        ============================================= */
-
-        @media (max-width: 850px) {
-
-            .ca-analyzer {
-                grid-template-columns: 1fr;
-            }
-
-            .ca-game-info {
-                grid-template-columns:
-                    repeat(2,1fr);
-            }
-
-            .ca-board {
-                width: 100%;
-            }
-
-            .ca-board-line {
-                width: 100%;
-            }
-        }
-
-        @media (max-width: 500px) {
-
-            .ca-game-info {
-                grid-template-columns: 1fr;
-            }
-
-            .ca-engine-grid,
-            .ca-accuracy-grid,
-            .ca-count-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .ca-panel {
-                padding: 15px;
-            }
-
-            .ca-board-line {
-                grid-template-columns:
-                    32px minmax(0,1fr);
-
-                gap: 6px;
-            }
-
-            .ca-eval-bar {
-                min-height: 220px;
-            }
-
-            .ca-eval-label {
-                font-size: 8px;
-            }
-        }
-    `;
-
-    document.head.appendChild(style);
 }
 
 // ======================================================
 // CREATE EMPTY STATS
 // ======================================================
+
+const CLASSIFICATION_PRESENTATION = {
+    Book:       { label: "Theory",          icon: "▤", description: "A recognized opening continuation." },
+    Brilliant:  { label: "Spark",           icon: "✧", description: "A rare, high-precision tactical idea." },
+    Great:      { label: "Masterstroke",     icon: "✦", description: "A strong response in a critical position." },
+    Best:       { label: "Optimal",          icon: "◆", description: "The engine's preferred move at the analyzed depth." },
+    Excellent:  { label: "Precise",          icon: "✓", description: "A highly accurate move." },
+    Good:       { label: "Sound",            icon: "●", description: "A sensible move with limited evaluation loss." },
+    Inaccuracy: { label: "Slip",             icon: "↘", description: "A small loss of advantage or precision." },
+    Mistake:    { label: "Error",            icon: "!", description: "A meaningful evaluation loss." },
+    Miss:       { label: "Missed chance",    icon: "◎", description: "A significant opportunity was not taken." },
+    Blunder:    { label: "Breakdown",        icon: "⚡", description: "A major loss of evaluation." }
+};
+
+function getClassificationPresentation(classification) {
+    return CLASSIFICATION_PRESENTATION[classification] || {
+        label: classification || "Pending",
+        icon: "·",
+        description: "Move classification is not available yet."
+    };
+}
+
+function classificationMarkup(classification) {
+    if (!classification) return "";
+    const info = getClassificationPresentation(classification);
+    const key = String(classification).toLowerCase();
+    return `<span class="cs-classification cs-class-${key}" title="${escapeHtml(info.description)}"><span class="cs-classification-icon" aria-hidden="true">${info.icon}</span><span>${escapeHtml(info.label)}</span></span>`;
+}
 
 function createEmptyStats() {
 
@@ -1495,6 +476,7 @@ analyzeButton.addEventListener("click", async () => {
     // ==================================================
 
     renderAnalyzer();
+    result.scrollIntoView({ behavior: "smooth", block: "start" });
 
     // ==================================================
     // AUTOMATIC ANALYSIS
@@ -1601,630 +583,200 @@ function loadChessComPlayerCards(headers) {
 }
 
 function renderAnalyzer() {
+    if (!gameData) return;
 
-    if (!gameData) {
-        return;
-    }
-
-    const headers =
-        gameData.headers;
+    const headers = gameData.headers;
+    const whiteName = headers.White || "White";
+    const blackName = headers.Black || "Black";
+    const rawResult = headers.Result || "*";
+    const resultLabel = rawResult === "1-0" ? "1–0" : rawResult === "0-1" ? "0–1" : rawResult === "1/2-1/2" ? "½–½" : "In progress";
+    const openingLabel = headers.Opening || headers.ECO || "Opening not identified";
+    const dateLabel = headers.Date || "Date unavailable";
+    const eventLabel = headers.Event || headers.Site || "Imported PGN";
+    const timeLabel = headers.TimeControl || "Time control unavailable";
 
     result.innerHTML = `
-
-        <div class="ca-wrapper">
-
-            <!-- ===================================== -->
-            <!-- GAME INFO -->
-            <!-- ===================================== -->
-
-            <div class="ca-game-info">
-
-                <div class="ca-info-card">
-
-                    <span class="ca-info-label">
-                        White
-                    </span>
-
-                    <span class="ca-info-value">
-                        ${escapeHtml(
-                            headers.White ||
-                            "Unknown"
-                        )}
-                    </span>
-
+        <section class="cs-report-view" aria-label="ChessScope game review">
+            <header class="cs-report-heading">
+                <div class="cs-report-heading-copy">
+                    <div class="cs-eyebrow"><span class="cs-eyebrow-dot"></span> CHESSSCOPE <span class="cs-eyebrow-divider">/</span> GAME REVIEW</div>
+                    <h2>${escapeHtml(whiteName)} <span class="cs-vs">vs</span> ${escapeHtml(blackName)}</h2>
+                    <p>${escapeHtml(openingLabel)} <span class="cs-heading-separator">·</span> ${escapeHtml(eventLabel)}</p>
                 </div>
-
-                <div class="ca-info-card">
-
-                    <span class="ca-info-label">
-                        Black
-                    </span>
-
-                    <span class="ca-info-value">
-                        ${escapeHtml(
-                            headers.Black ||
-                            "Unknown"
-                        )}
-                    </span>
-
+                <div class="cs-result-block">
+                    <span class="cs-result-label">GAME RESULT</span>
+                    <strong>${escapeHtml(resultLabel)}</strong>
                 </div>
+            </header>
 
-                <div class="ca-info-card">
-
-                    <span class="ca-info-label">
-                        Result
-                    </span>
-
-                    <span class="ca-info-value">
-                        ${escapeHtml(
-                            headers.Result ||
-                            "Unknown"
-                        )}
-                    </span>
-
-                </div>
-
-                <div class="ca-info-card">
-
-                    <span class="ca-info-label">
-                        White Rating
-                    </span>
-
-                    <span class="ca-info-value">
-                        ${escapeHtml(
-                            headers.WhiteElo ||
-                            "Unknown"
-                        )}
-                    </span>
-
-                </div>
-
-                <div class="ca-info-card">
-
-                    <span class="ca-info-label">
-                        Black Rating
-                    </span>
-
-                    <span class="ca-info-value">
-                        ${escapeHtml(
-                            headers.BlackElo ||
-                            "Unknown"
-                        )}
-                    </span>
-
-                </div>
-
-                <div class="ca-info-card">
-
-                    <span class="ca-info-label">
-                        Moves
-                    </span>
-
-                    <span class="ca-info-value">
-                        ${gameData.moves.length}
-                    </span>
-
-                </div>
-
+            <div class="cs-game-meta" aria-label="Game details">
+                <div class="cs-meta-item"><span class="cs-meta-icon">▦</span><span><small>DATE</small><strong>${escapeHtml(dateLabel)}</strong></span></div>
+                <div class="cs-meta-item"><span class="cs-meta-icon">♙</span><span><small>OPENING</small><strong>${escapeHtml(openingLabel)}</strong></span></div>
+                <div class="cs-meta-item"><span class="cs-meta-icon">◷</span><span><small>TIME CONTROL</small><strong>${escapeHtml(timeLabel)}</strong></span></div>
+                <div class="cs-meta-item"><span class="cs-meta-icon">⇄</span><span><small>HALF-MOVES</small><strong>${gameData.moves.length}</strong></span></div>
             </div>
 
-            <!-- ===================================== -->
-            <!-- ANALYZER -->
-            <!-- ===================================== -->
-
-            <div class="ca-analyzer">
-
-                <!-- ================================= -->
-                <!-- BOARD -->
-                <!-- ================================= -->
-
-                <div class="ca-board-area">
-
-                    <div class="ca-player-cards" aria-label="Game players">
-                        <div class="ca-player-card" data-player-card="black">
-                            <div class="ca-player-fallback" aria-hidden="true">B</div>
-                            <img class="ca-player-avatar" alt="" hidden>
-                            <div class="ca-player-copy">
-                                <span class="ca-player-color">Black</span>
-                                <a class="ca-player-name">Black</a>
-                                <span class="ca-player-rating">${escapeHtml(headers.BlackElo || "Rating unavailable")}</span>
-                                <span class="ca-player-status">Profile lookup not started</span>
-                            </div>
-                        </div>
-                        <div class="ca-player-card" data-player-card="white">
-                            <div class="ca-player-fallback" aria-hidden="true">W</div>
-                            <img class="ca-player-avatar" alt="" hidden>
-                            <div class="ca-player-copy">
-                                <span class="ca-player-color">White</span>
-                                <a class="ca-player-name">White</a>
-                                <span class="ca-player-rating">${escapeHtml(headers.WhiteElo || "Rating unavailable")}</span>
-                                <span class="ca-player-status">Profile lookup not started</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="ca-board-line">
-
-                        <!-- EVALUATION BAR -->
-
-                        <div class="ca-eval-sidebar">
-
-                            <div
-                                id="ca-eval-label"
-                                class="ca-eval-label">
-
-                                Analyzing
-
+            <div class="ca-wrapper">
+                <div class="ca-analyzer">
+                    <section class="ca-board-area" aria-label="Interactive game board">
+                        <div class="cs-board-card">
+                            <div class="cs-card-topline">
+                                <div><span class="cs-section-kicker">THE GAME</span><h3>Move review</h3></div>
+                                <div class="cs-board-live"><span></span> INTERACTIVE BOARD</div>
                             </div>
 
-                            <div class="ca-eval-bar">
-
-                                <div
-                                    id="ca-eval-bar-fill"
-                                    class="ca-eval-bar-fill">
+                            <div class="ca-player-cards" aria-label="Game players">
+                                <div class="ca-player-card" data-player-card="black">
+                                    <div class="ca-player-fallback" aria-hidden="true">B</div>
+                                    <img class="ca-player-avatar" alt="" hidden>
+                                    <div class="ca-player-copy">
+                                        <span class="ca-player-color">BLACK</span>
+                                        <a class="ca-player-name">${escapeHtml(blackName)}</a>
+                                        <span class="ca-player-rating">${escapeHtml(headers.BlackElo || "Rating unavailable")}</span>
+                                        <span class="ca-player-status">Player details</span>
+                                    </div>
+                                    <span class="cs-player-piece" aria-hidden="true">♚</span>
                                 </div>
-
-                                <div
-                                    class="ca-eval-bar-top">
-                                    BLACK
+                                <div class="ca-player-card" data-player-card="white">
+                                    <div class="ca-player-fallback" aria-hidden="true">W</div>
+                                    <img class="ca-player-avatar" alt="" hidden>
+                                    <div class="ca-player-copy">
+                                        <span class="ca-player-color">WHITE</span>
+                                        <a class="ca-player-name">${escapeHtml(whiteName)}</a>
+                                        <span class="ca-player-rating">${escapeHtml(headers.WhiteElo || "Rating unavailable")}</span>
+                                        <span class="ca-player-status">Player details</span>
+                                    </div>
+                                    <span class="cs-player-piece" aria-hidden="true">♔</span>
                                 </div>
-
-                                <div
-                                    class="ca-eval-bar-bottom">
-                                    WHITE
-                                </div>
-
-                                <div
-                                    class="ca-eval-zero">
-                                </div>
-
                             </div>
 
+                            <div class="ca-board-line">
+                                <div class="ca-eval-sidebar" aria-label="Position evaluation">
+                                    <div id="ca-eval-label" class="ca-eval-label">ANALYZING</div>
+                                    <div class="ca-eval-bar">
+                                        <div id="ca-eval-bar-fill" class="ca-eval-bar-fill"></div>
+                                        <div class="ca-eval-bar-top">B</div>
+                                        <div class="ca-eval-bar-bottom">W</div>
+                                        <div class="ca-eval-zero"></div>
+                                    </div>
+                                </div>
+                                <div id="ca-board" class="ca-board" aria-label="Chessboard position"></div>
+                            </div>
+                            <div id="ca-board-caption" class="ca-board-caption">Initial chess position</div>
+
+                            <div class="ca-controls" aria-label="Move navigation controls">
+                                <button id="ca-start" class="ca-control" type="button" title="Go to the start">|◀</button>
+                                <button id="ca-prev" class="ca-control" type="button" title="Previous move">‹</button>
+                                <button id="ca-play" class="ca-control ca-control-play" type="button" title="Autoplay moves">▶ Play</button>
+                                <button id="ca-next" class="ca-control" type="button" title="Next move">›</button>
+                                <button id="ca-end" class="ca-control" type="button" title="Go to the end">▶|</button>
+                                <button id="ca-sound" class="ca-control ca-control-sound" type="button" aria-pressed="true" title="Toggle move sounds">♫</button>
+                            </div>
+                            <div class="cs-keyboard-hint"><kbd>←</kbd><kbd>→</kbd> navigate moves <span>·</span> <kbd>Space</kbd> play / pause</div>
                         </div>
 
-                        <!-- CHESSBOARD -->
+                        <section class="cs-timeline-card" aria-label="Move list">
+                            <div class="cs-card-topline cs-timeline-heading">
+                                <div><span class="cs-section-kicker">FOLLOW THE GAME</span><h3>Move timeline</h3></div>
+                                <span class="cs-hint-text">Select any move to inspect its position</span>
+                            </div>
+                            <div id="ca-move-list" class="ca-move-list"></div>
+                        </section>
+                    </section>
 
-                        <div
-                            id="ca-board"
-                            class="ca-board">
+                    <aside class="ca-panel" aria-label="Game review report">
+                        <div class="cs-panel-heading">
+                            <div><span class="cs-section-kicker">YOUR GAME, EXPLAINED</span><h3>Review report</h3></div>
+                            <span class="cs-report-mark">CS<span>·</span></span>
                         </div>
 
-                    </div>
+                        <div class="ca-engine-status" id="ca-engine-status" role="status" aria-live="polite">Preparing Stockfish…</div>
+                        <div class="ca-progress-box"><div class="cs-progress-caption"><span>ENGINE ANALYSIS</span><span id="ca-progress-label">0%</span></div><div class="ca-progress-track"><div id="ca-progress-fill" class="ca-progress-fill"></div></div></div>
 
-                    <div
-                        id="ca-board-caption"
-                        class="ca-board-caption">
-                    </div>
+                        <section class="cs-panel-section cs-eval-section">
+                            <div class="cs-section-row"><div><span class="cs-section-kicker">POSITION BY POSITION</span><h4>Evaluation flow</h4></div><span class="cs-chart-key"><i></i> White advantage</span></div>
+                            <div class="ca-evaluation"><svg id="ca-eval-graph" viewBox="0 0 900 180" preserveAspectRatio="none" role="img" aria-label="Evaluation graph"></svg></div>
+                            <div class="cs-chart-axis"><span>Black advantage</span><span>Equal</span><span>White advantage</span></div>
+                        </section>
 
-                    <!-- CONTROLS -->
+                        <section class="cs-panel-section cs-accuracy-section">
+                            <div class="cs-section-row"><div><span class="cs-section-kicker">MOVE QUALITY ESTIMATE</span><h4>Player accuracy</h4></div><span class="cs-estimate-tag">ESTIMATED</span></div>
+                            <div class="ca-accuracy-grid">
+                                <div class="ca-accuracy-card cs-accuracy-white"><span class="ca-accuracy-player">${escapeHtml(whiteName)}</span><strong id="ca-white-accuracy" class="ca-accuracy-value">—</strong><span class="cs-accuracy-caption">WHITE</span></div>
+                                <div class="ca-accuracy-card cs-accuracy-black"><span class="ca-accuracy-player">${escapeHtml(blackName)}</span><strong id="ca-black-accuracy" class="ca-accuracy-value">—</strong><span class="cs-accuracy-caption">BLACK</span></div>
+                            </div>
+                        </section>
 
-                    <div class="ca-controls">
+                        <section class="cs-selected-move" aria-live="polite">
+                            <div class="cs-section-row"><div><span class="cs-section-kicker">POSITION INSIGHT</span><h4>Selected move</h4></div><span class="cs-insight-icon">⌖</span></div>
+                            <div id="ca-current-move" class="ca-current-move-value">Starting Position</div>
+                            <div id="ca-current-classification" class="ca-current-classification">Initial position</div>
+                        </section>
 
-                        <button
-                            id="ca-start"
-                            class="ca-control">
+                        <section class="cs-panel-section cs-engine-section">
+                            <div class="cs-section-row"><div><span class="cs-section-kicker">STOCKFISH</span><h4>Move comparison</h4></div><span id="ca-engine-depth" class="cs-engine-depth">DEPTH —</span></div>
+                            <div class="ca-engine-grid">
+                                <div class="ca-engine-stat"><span class="ca-engine-stat-label">Evaluation</span><strong id="ca-engine-evaluation" class="ca-engine-stat-value">—</strong></div>
+                                <div class="ca-engine-stat"><span class="ca-engine-stat-label">Engine choice</span><strong id="ca-engine-best" class="ca-engine-stat-value">—</strong></div>
+                                <div class="ca-engine-stat"><span class="ca-engine-stat-label">Played</span><strong id="ca-engine-played" class="ca-engine-stat-value">—</strong></div>
+                                <div class="ca-engine-stat"><span class="ca-engine-stat-label">Move grade</span><strong id="ca-engine-quality" class="ca-engine-stat-value">—</strong></div>
+                            </div>
+                            <div class="cs-engine-line"><span>PRINCIPAL VARIATION</span><code id="ca-engine-pv" class="ca-fen">—</code></div>
+                        </section>
 
-                            ⏮ Start
+                        <section class="cs-panel-section cs-breakdown-section">
+                            <div class="cs-section-row"><div><span class="cs-section-kicker">CLASSIFICATION MIX</span><h4>Move breakdown</h4></div></div>
+                            <div class="cs-player-breakdown"><div class="ca-fen-box"><span class="ca-fen-label">WHITE</span><div id="ca-white-counts" class="ca-count-grid"></div></div><div class="ca-fen-box"><span class="ca-fen-label">BLACK</span><div id="ca-black-counts" class="ca-count-grid"></div></div></div>
+                        </section>
 
-                        </button>
+                        <section class="cs-panel-section cs-critical-section">
+                            <div class="cs-section-row"><div><span class="cs-section-kicker">KEY MOMENTS</span><h4>Turning points</h4></div></div>
+                            <div id="ca-critical-moments" class="cs-critical-list"><p class="cs-empty-note">Critical moments appear as the engine reviews the game.</p></div>
+                        </section>
 
-                        <button
-                            id="ca-prev"
-                            class="ca-control">
-
-                            ◀ Previous
-
-                        </button>
-
-                        <button
-                            id="ca-play"
-                            class="ca-control">
-
-                            ▶ Play
-
-                        </button>
-
-                        <button
-                            id="ca-next"
-                            class="ca-control">
-
-                            Next ▶
-
-                        </button>
-
-                        <button
-                            id="ca-end"
-                            class="ca-control">
-
-                            End ⏭
-
-                        </button>
-
-                        <button
-                            id="ca-sound"
-                            class="ca-control"
-                            type="button"
-                            aria-pressed="true"
-                            title="Toggle original chess move sounds">
-
-                            🔊 Sound on
-
-                        </button>
-
-                    </div>
-
+                        <details class="cs-technical-details">
+                            <summary>Technical position data</summary>
+                            <span class="ca-fen-label">CURRENT FEN</span><code id="ca-fen" class="ca-fen"></code>
+                        </details>
+                        <p class="ca-analysis-note">ChessScope estimates move quality from Stockfish evaluations and its own classification rules. It is not an official Chess.com or Lichess accuracy score. Results depend on engine depth, hardware and the grading model.</p>
+                    </aside>
                 </div>
-
-                <!-- ================================= -->
-                <!-- RIGHT PANEL -->
-                <!-- ================================= -->
-
-                <div class="ca-panel">
-
-                    <h2 class="ca-panel-title">
-                        Game Analysis
-                    </h2>
-
-                    <!-- ANALYSIS STATUS -->
-
-                    <div
-                        id="ca-engine-status"
-                        class="ca-engine-status">
-
-                        ⏳ Preparing Stockfish...
-
-                    </div>
-
-                    <!-- PROGRESS -->
-
-                    <div class="ca-progress-box">
-
-                        <div
-                            class="ca-progress-track">
-
-                            <div
-                                id="ca-progress-fill"
-                                class="ca-progress-fill">
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                    <!-- EVALUATION GRAPH -->
-
-                    <div class="ca-evaluation">
-
-                        <div class="ca-evaluation-header">
-                            Evaluation
-                        </div>
-
-                        <svg
-                            id="ca-eval-graph"
-                            viewBox="0 0 900 180"
-                            preserveAspectRatio="none">
-                        </svg>
-
-                    </div>
-
-                    <!-- ACCURACY -->
-
-                    <div class="ca-accuracy-grid">
-
-                        <div class="ca-accuracy-card">
-
-                            <span
-                                class="ca-accuracy-player">
-
-                                ${escapeHtml(
-                                    headers.White ||
-                                    "White"
-                                )}
-
-                            </span>
-
-                            <span
-                                id="ca-white-accuracy"
-                                class="ca-accuracy-value">
-
-                                —
-
-                            </span>
-
-                        </div>
-
-                        <div class="ca-accuracy-card">
-
-                            <span
-                                class="ca-accuracy-player">
-
-                                ${escapeHtml(
-                                    headers.Black ||
-                                    "Black"
-                                )}
-
-                            </span>
-
-                            <span
-                                id="ca-black-accuracy"
-                                class="ca-accuracy-value">
-
-                                —
-
-                            </span>
-
-                        </div>
-
-                    </div>
-
-                    <!-- CURRENT MOVE -->
-
-                    <div class="ca-current-move">
-
-                        <div class="ca-current-move-label">
-                            Current Move
-                        </div>
-
-                        <div
-                            id="ca-current-move"
-                            class="ca-current-move-value">
-
-                        </div>
-
-                        <div
-                            id="ca-current-classification"
-                            class="ca-current-classification">
-                            Waiting for analysis
-                        </div>
-
-                    </div>
-
-                    <!-- ENGINE -->
-
-                    <div class="ca-engine-grid">
-
-                        <div class="ca-engine-stat">
-
-                            <span
-                                class="ca-engine-stat-label">
-                                Evaluation
-                            </span>
-
-                            <span
-                                id="ca-engine-evaluation"
-                                class="ca-engine-stat-value">
-
-                                —
-
-                            </span>
-
-                        </div>
-
-                        <div class="ca-engine-stat">
-
-                            <span
-                                class="ca-engine-stat-label">
-                                Best Move
-                            </span>
-
-                            <span
-                                id="ca-engine-best"
-                                class="ca-engine-stat-value">
-
-                                —
-
-                            </span>
-
-                        </div>
-
-                        <div class="ca-engine-stat">
-
-                            <span
-                                class="ca-engine-stat-label">
-                                Played Move
-                            </span>
-
-                            <span
-                                id="ca-engine-played"
-                                class="ca-engine-stat-value">
-
-                                —
-
-                            </span>
-
-                        </div>
-
-                        <div class="ca-engine-stat">
-
-                            <span
-                                class="ca-engine-stat-label">
-                                Move Quality
-                            </span>
-
-                            <span
-                                id="ca-engine-quality"
-                                class="ca-engine-stat-value">
-
-                                —
-
-                            </span>
-
-                        </div>
-
-                    </div>
-
-                    <!-- MOVE COUNTS -->
-
-                    <div class="ca-fen-box">
-
-                        <span class="ca-fen-label">
-                            White Moves
-                        </span>
-
-                        <div
-                            id="ca-white-counts"
-                            class="ca-count-grid">
-                        </div>
-
-                    </div>
-
-                    <div class="ca-fen-box">
-
-                        <span class="ca-fen-label">
-                            Black Moves
-                        </span>
-
-                        <div
-                            id="ca-black-counts"
-                            class="ca-count-grid">
-                        </div>
-
-                    </div>
-
-                    <!-- MOVE LIST -->
-
-                    <div class="ca-fen-box">
-
-                        <span class="ca-fen-label">
-                            Moves
-                        </span>
-
-                        <div
-                            id="ca-move-list"
-                            class="ca-move-list">
-                        </div>
-
-                    </div>
-
-                    <!-- FEN -->
-
-                    <div class="ca-fen-box">
-
-                        <span class="ca-fen-label">
-                            Current FEN
-                        </span>
-
-                        <code
-                            id="ca-fen"
-                            class="ca-fen">
-                        </code>
-
-                    </div>
-
-                    <!-- PV -->
-
-                    <div class="ca-fen-box">
-
-                        <span class="ca-fen-label">
-                            Engine Line
-                        </span>
-
-                        <code
-                            id="ca-engine-pv"
-                            class="ca-fen">
-
-                            —
-
-                        </code>
-
-                    </div>
-
-                    <div class="ca-analysis-note">
-
-                        Stockfish 19 Lite single-threaded analyzes each position to depth 12.
-                        Analysis time depends on game length and your device. Move labels
-                        are engine-based estimates, not Chess.com's proprietary review.
-                        Opening-book coverage is limited; Brilliant, Great and Miss are
-                        conservative heuristics and can differ from other platforms.
-
-                    </div>
-
-                </div>
-
             </div>
-
-        </div>
+        </section>
     `;
 
-    // Fill the player cards using the PGN tags and attempt public profile lookup.
+    // Resolve the player names and load optional public Chess.com avatars.
     const blackCard = document.querySelector('[data-player-card="black"]');
     const whiteCard = document.querySelector('[data-player-card="white"]');
-    if (blackCard) blackCard.querySelector(".ca-player-name").textContent = headers.Black || "Black";
-    if (whiteCard) whiteCard.querySelector(".ca-player-name").textContent = headers.White || "White";
+    if (blackCard) blackCard.querySelector(".ca-player-name").textContent = blackName;
+    if (whiteCard) whiteCard.querySelector(".ca-player-name").textContent = whiteName;
     loadChessComPlayerCards(headers);
 
     renderMoveList();
     renderPosition();
 
-    // ==================================================
-    // CONTROLS
-    // ==================================================
-
-    document
-        .getElementById("ca-start")
-        .addEventListener(
-            "click",
-            () => {
-
-                stopAutoplay();
-
-                goToPosition(0);
-            }
-        );
-
-    document
-        .getElementById("ca-prev")
-        .addEventListener(
-            "click",
-            () => {
-
-                stopAutoplay();
-
-                goToPosition(
-                    currentPosition - 1
-                );
-            }
-        );
-
-    document
-        .getElementById("ca-next")
-        .addEventListener(
-            "click",
-            () => {
-
-                goToPosition(
-                    currentPosition + 1
-                );
-            }
-        );
-
-    document
-        .getElementById("ca-end")
-        .addEventListener(
-            "click",
-            () => {
-
-                stopAutoplay();
-
-                goToPosition(
-                    gameData.positions.length - 1
-                );
-            }
-        );
-
-    document
-        .getElementById("ca-play")
-        .addEventListener(
-            "click",
-            toggleAutoplay
-        );
+    document.getElementById("ca-start").addEventListener("click", () => {
+        stopAutoplay();
+        goToPosition(0);
+    });
+    document.getElementById("ca-prev").addEventListener("click", () => {
+        stopAutoplay();
+        goToPosition(currentPosition - 1);
+    });
+    document.getElementById("ca-next").addEventListener("click", () => goToPosition(currentPosition + 1));
+    document.getElementById("ca-end").addEventListener("click", () => {
+        stopAutoplay();
+        goToPosition(gameData.positions.length - 1);
+    });
+    document.getElementById("ca-play").addEventListener("click", toggleAutoplay);
 
     const soundButton = document.getElementById("ca-sound");
     if (soundButton) {
         soundButton.addEventListener("click", () => {
             soundsEnabled = !soundsEnabled;
-            soundButton.textContent = soundsEnabled ? "🔊 Sound on" : "🔇 Sound off";
+            soundButton.textContent = soundsEnabled ? "♫" : "♪̸";
             soundButton.setAttribute("aria-pressed", String(soundsEnabled));
+            soundButton.title = soundsEnabled ? "Turn move sounds off" : "Turn move sounds on";
             if (soundsEnabled) playUiTone("move");
         });
     }
@@ -2354,10 +906,10 @@ async function runAutomaticAnalysis() {
                 ((i + 1) / total) * 100;
 
             if (progressFill) {
-
-                progressFill.style.width =
-                    `${percent}%`;
+                progressFill.style.width = `${percent}%`;
             }
+            const progressLabel = document.getElementById("ca-progress-label");
+            if (progressLabel) progressLabel.textContent = `${Math.round(percent)}%`;
 
             // ------------------------------------------------
             // UPDATE UI
@@ -2378,8 +930,9 @@ async function runAutomaticAnalysis() {
         // FINISHED
         // ------------------------------------------------
 
-        gameData.analyzed =
-            true;
+        gameData.analyzed = true;
+        const progressLabel = document.getElementById("ca-progress-label");
+        if (progressLabel) progressLabel.textContent = "100%";
 
         calculateFinalStats();
 
@@ -2762,6 +1315,36 @@ function calculateFinalStats() {
             : 0;
 }
 
+function renderCriticalMoments() {
+    const element = document.getElementById("ca-critical-moments");
+    if (!element || !gameData) return;
+
+    const moments = gameData.positions
+        .map((position, index) => ({ position, index }))
+        .filter(({ position }) => ["Inaccuracy", "Mistake", "Miss", "Blunder"].includes(position.classification))
+        .sort((a, b) => (b.position.expectedPointsLoss || 0) - (a.position.expectedPointsLoss || 0))
+        .slice(0, 5)
+        .sort((a, b) => a.index - b.index);
+
+    if (!moments.length) {
+        element.innerHTML = `<p class="cs-empty-note">${gameData.analyzed ? "No major turning points were flagged by the current grading model." : "The engine is still reviewing the rest of the game."}</p>`;
+        return;
+    }
+
+    element.innerHTML = "";
+    moments.forEach(({ position, index }) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "cs-critical-item";
+        button.innerHTML = `<span class="cs-critical-move">${position.moveNumber}${position.side === "w" ? "." : "..."} ${escapeHtml(position.san)}</span>${classificationMarkup(position.classification)}<span class="cs-critical-loss">−${(position.expectedPointsLoss || 0).toFixed(1)} pts</span>`;
+        button.addEventListener("click", () => {
+            stopAutoplay();
+            goToPosition(index);
+        });
+        element.appendChild(button);
+    });
+}
+
 // ======================================================
 // UPDATE ANALYSIS UI
 // ======================================================
@@ -2811,6 +1394,7 @@ function updateAnalysisUI() {
     drawEvaluationGraph();
 
     updateMoveButtonClassifications();
+    renderCriticalMoments();
 }
 
 // ======================================================
@@ -2841,10 +1425,10 @@ function updateMoveButtonClassifications() {
 
             if (position.classification) {
                 button.dataset.classification = position.classification;
-                if (badge) badge.textContent = position.classification;
+                if (badge) badge.innerHTML = classificationMarkup(position.classification);
             } else {
                 delete button.dataset.classification;
-                if (badge) badge.textContent = "";
+                if (badge) badge.innerHTML = "";
             }
         }
     );
@@ -2894,8 +1478,8 @@ function updateCountGrid(
             left.className =
                 "ca-count-left";
 
-            left.textContent =
-                classification;
+            const info = getClassificationPresentation(classification);
+            left.innerHTML = `<span class="cs-count-icon" aria-hidden="true">${info.icon}</span><span>${escapeHtml(info.label)}</span>`;
 
             const right =
                 document.createElement(
@@ -3275,6 +1859,12 @@ function updateCurrentEnginePanel() {
             "ca-engine-pv"
         );
 
+    const depthElement = document.getElementById("ca-engine-depth");
+    if (depthElement) {
+        const depthSource = currentPosition === 0 ? position : gameData.positions[currentPosition - 1];
+        depthElement.textContent = depthSource.analysis?.depth ? `DEPTH ${depthSource.analysis.depth}` : "DEPTH —";
+    }
+
     // Starting position
     if (
         currentPosition === 0
@@ -3374,10 +1964,9 @@ function updateCurrentEnginePanel() {
     // Classification
     if (qualityElement) {
 
-        qualityElement.textContent =
-            after.classification
-                ? `${after.classification} • ${after.loss.toFixed(2)}`
-                : "Analyzing...";
+        qualityElement.innerHTML = after.classification
+            ? `${classificationMarkup(after.classification)}<small class="cs-loss-note">${after.loss.toFixed(2)} pawn loss · estimated</small>`
+            : "Analyzing...";
     }
 
     // Principal variation BEFORE move
@@ -3883,10 +2472,11 @@ function renderPosition() {
     }
 
     if (currentClassificationElement) {
-        currentClassificationElement.textContent =
-            currentPosition === 0
-                ? "Initial position"
-                : (position.classification || "Not analyzed yet");
+        currentClassificationElement.innerHTML = currentPosition === 0
+            ? '<span class="cs-empty-classification">Initial position</span>'
+            : (position.classification
+                ? classificationMarkup(position.classification)
+                : '<span class="cs-empty-classification">Awaiting engine review</span>');
         currentClassificationElement.className =
             "ca-current-classification" +
             (position.classification
@@ -3977,9 +2567,10 @@ function renderPosition() {
             delete statusElement.dataset.classification;
             statusElement.textContent = "♟ Initial position — select a move to review its quality.";
         } else {
-            const quality = position.classification || "Move reviewed";
+            const quality = position.classification ? getClassificationPresentation(position.classification).label : "Move reviewed";
             statusElement.textContent = `${quality} move · ${position.label}`;
-            statusElement.dataset.classification = quality;
+            if (position.classification) statusElement.dataset.classification = position.classification;
+            else delete statusElement.dataset.classification;
         }
     }
 
@@ -4086,7 +2677,7 @@ function renderMoveList() {
                 )}
 
                 <span class="ca-move-badge">
-                    ${escapeHtml(position.classification || "")}
+                    ${classificationMarkup(position.classification)}
                 </span>
             `;
 
@@ -4337,6 +2928,12 @@ document.addEventListener(
                 "INPUT"
         ) {
 
+            return;
+        }
+
+        if (event.code === "Space") {
+            event.preventDefault();
+            toggleAutoplay();
             return;
         }
 
