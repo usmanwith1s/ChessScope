@@ -402,3 +402,56 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; place-items: center; 
     .cs-intro-art { opacity: .08; }
     .ca-eval-bar-top, .ca-eval-bar-bottom { font-size: 7px; }
 }
+
+/* ChessScope move-quality palette — shared by labels and destination squares. */
+.cs-class-book { color: #ead1b2; border-color: rgba(196,151,103,.42); background: rgba(176,126,76,.20); }
+.cs-class-brilliant { color: #8ceeff; border-color: rgba(46,202,225,.46); background: rgba(25,166,194,.20); }
+.cs-class-great { color: #a9c9ff; border-color: rgba(71,132,230,.46); background: rgba(55,112,210,.21); }
+.cs-class-best { color: #a8efb7; border-color: rgba(70,183,101,.40); background: rgba(49,157,79,.19); }
+.cs-class-excellent { color: #a8efb7; border-color: rgba(70,183,101,.40); background: rgba(49,157,79,.19); }
+.cs-class-good { color: #c7e9ad; border-color: rgba(151,193,112,.42); background: rgba(132,175,91,.20); }
+.cs-class-inaccuracy { color: #f4df8a; border-color: rgba(219,183,65,.46); background: rgba(192,156,43,.22); }
+.cs-class-mistake { color: #ffc08e; border-color: rgba(224,137,61,.48); background: rgba(197,103,37,.23); }
+.cs-class-miss { color: #ffc0c0; border-color: rgba(229,130,137,.48); background: rgba(206,102,113,.23); }
+.cs-class-blunder { color: #ffb3b8; border-color: rgba(175,48,61,.55); background: rgba(137,28,42,.34); }
+
+.ca-last-to-book { background-color: rgba(190,145,99,.68) !important; }
+.ca-last-to-brilliant { background-color: rgba(28,191,218,.68) !important; }
+.ca-last-to-great { background-color: rgba(55,117,226,.68) !important; }
+.ca-last-to-best, .ca-last-to-excellent { background-color: rgba(55,171,91,.64) !important; }
+.ca-last-to-good { background-color: rgba(151,190,113,.62) !important; }
+.ca-last-to-inaccuracy { background-color: rgba(228,193,67,.68) !important; }
+.ca-last-to-mistake { background-color: rgba(225,133,58,.72) !important; }
+.ca-last-to-miss { background-color: rgba(230,142,150,.68) !important; }
+.ca-last-to-blunder { background-color: rgba(151,35,49,.82) !important; }
+
+/* Slow, restrained emphasis for standout moves and the final mating position. */
+.ca-piece-spark-animation { animation: cs-spark-piece-land 1.35s cubic-bezier(.18,.74,.25,1) both; transform-origin: 50% 62%; }
+.ca-piece-masterstroke-animation { animation: cs-masterstroke-piece-land 1.18s cubic-bezier(.18,.74,.25,1) both; transform-origin: 50% 62%; }
+.ca-checkmate-square { animation: cs-checkmate-square 1.55s ease-in-out both; }
+.ca-piece-checkmate-animation { animation: cs-checkmate-king 1.6s cubic-bezier(.2,.75,.25,1) both; transform-origin: 50% 58%; }
+@keyframes cs-spark-piece-land {
+    0% { transform: translateY(-13px) scale(.88); filter: drop-shadow(0 0 0 rgba(30,197,224,0)); }
+    44% { transform: translateY(2px) scale(1.07); filter: drop-shadow(0 0 13px rgba(42,203,231,.88)); }
+    72% { transform: translateY(-1px) scale(1.015); filter: drop-shadow(0 0 9px rgba(42,203,231,.54)); }
+    100% { transform: translateY(0) scale(1); filter: drop-shadow(0 2px 1px rgba(0,0,0,.23)); }
+}
+@keyframes cs-masterstroke-piece-land {
+    0% { transform: translateY(-10px) scale(.91); filter: drop-shadow(0 0 0 rgba(66,130,237,0)); }
+    48% { transform: translateY(1px) scale(1.055); filter: drop-shadow(0 0 12px rgba(66,130,237,.82)); }
+    100% { transform: translateY(0) scale(1); filter: drop-shadow(0 2px 1px rgba(0,0,0,.23)); }
+}
+@keyframes cs-checkmate-square {
+    0%, 100% { box-shadow: inset 0 0 0 0 rgba(166,35,48,.15); }
+    48% { box-shadow: inset 0 0 0 999px rgba(170,34,48,.42); }
+}
+@keyframes cs-checkmate-king {
+    0% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(190,39,51,0)); }
+    42% { transform: scale(1.16); filter: drop-shadow(0 0 14px rgba(190,39,51,.9)); }
+    72% { transform: scale(1.08); filter: drop-shadow(0 0 9px rgba(190,39,51,.65)); }
+    100% { transform: scale(1); filter: drop-shadow(0 2px 1px rgba(0,0,0,.23)); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .ca-piece-spark-animation, .ca-piece-masterstroke-animation,
+    .ca-checkmate-square, .ca-piece-checkmate-animation { animation: none !important; }
+}
