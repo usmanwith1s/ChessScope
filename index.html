@@ -3,34 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>Chess Analyzer</title>
-
-    <link rel="stylesheet" href="style.css">
+    <meta name="theme-color" content="#0b1110">
+    <meta name="description" content="ChessScope reviews your chess games with Stockfish-powered analysis, move classifications and an interactive evaluation graph.">
+    <title>ChessScope — Chess Game Review</title>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    <link rel="stylesheet" href="style.css?v=20261031-review">
+    <link rel="stylesheet" href="review.css?v=20261031-review">
 </head>
-
 <body>
+    <div class="cs-page-glow cs-page-glow-one" aria-hidden="true"></div>
+    <div class="cs-page-glow cs-page-glow-two" aria-hidden="true"></div>
 
-    <main class="container">
+    <header class="cs-topbar">
+        <a class="cs-brand" href="./" aria-label="ChessScope home">
+            <span class="cs-brand-mark" aria-hidden="true"><span>♞</span></span>
+            <span class="cs-brand-word">chess<span>scope</span><small>GAME REVIEW</small></span>
+        </a>
+        <div class="cs-topbar-right">
+            <span class="cs-engine-status-chip"><i></i> STOCKFISH 19 LITE</span>
+            <span class="cs-local-chip"><span class="cs-lock-icon">⌑</span> Engine analysis runs in your browser</span>
+        </div>
+    </header>
 
-        <h1>Chess Analyzer</h1>
+    <main class="cs-main">
+        <section class="cs-intro">
+            <div class="cs-intro-copy">
+                <div class="cs-eyebrow"><span class="cs-eyebrow-dot"></span> SEE THE GAME BEHIND THE MOVES</div>
+                <h1>Every move<br><em>tells a story.</em></h1>
+                <p>Bring in a PGN and uncover the turning points, missed chances and moments of precision that shaped your game.</p>
+            </div>
+            <div class="cs-intro-art" aria-hidden="true">
+                <div class="cs-art-ring cs-art-ring-one"></div>
+                <div class="cs-art-ring cs-art-ring-two"></div>
+                <div class="cs-art-piece">♞</div>
+                <span class="cs-art-dot cs-art-dot-one"></span>
+                <span class="cs-art-dot cs-art-dot-two"></span>
+            </div>
+        </section>
 
-        <p>Paste your PGN below to analyze your game.</p>
+        <section class="cs-import-card" aria-labelledby="import-title">
+            <div class="cs-import-heading">
+                <div>
+                    <span class="cs-section-kicker">START YOUR REVIEW</span>
+                    <h2 id="import-title">Import a game</h2>
+                </div>
+                <span class="cs-pgn-badge">PGN SUPPORTED</span>
+            </div>
+            <label class="cs-textarea-label" for="pgn-input">PASTE YOUR GAME NOTATION</label>
+            <textarea id="pgn-input" spellcheck="false" placeholder='[Event "Casual Game"]&#10;[White "Player 1"]&#10;[Black "Player 2"]&#10;[Result "*"]&#10;&#10;1. e4 e5 2. Nf3 Nc6 3. Bc4 Bc5 *'></textarea>
+            <div class="cs-import-actions">
+                <div class="cs-import-secondary">
+                    <label class="cs-upload-button" for="pgn-file"><span>↑</span> Upload PGN</label>
+                    <input id="pgn-file" type="file" accept=".pgn,text/plain,application/x-chess-pgn" hidden>
+                    <button id="load-sample" class="cs-sample-button" type="button">Load sample game</button>
+                </div>
+                <button id="analyze-button" class="cs-analyze-button" type="button"><span>Review game</span><span class="cs-analyze-arrow">↗</span></button>
+            </div>
+            <div id="input-status" class="cs-input-status" role="status" aria-live="polite">Your PGN is processed locally in this browser.</div>
+        </section>
 
-        <textarea
-            id="pgn-input"
-            placeholder="Paste your PGN here..."
-        ></textarea>
+        <div id="result" aria-live="polite"></div>
 
-        <button id="analyze-button">
-            Analyze Game
-        </button>
-
-        <div id="result"></div>
-
+        <footer class="cs-footer">
+            <span>CHESSSCOPE <i>·</i> A focused chess game review</span>
+            <span>Engine-powered <i>·</i> Player-first</span>
+        </footer>
     </main>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
-    <script src="script.js?v=20261023-avatars"></script>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="script.js?v=20261031-review"></script>
+    <script>
+        (() => {
+            const input = document.getElementById('pgn-input');
+            const fileInput = document.getElementById('pgn-file');
+            const sampleButton = document.getElementById('load-sample');
+            const status = document.getElementById('input-status');
+            const sample = `[Event "Ruy Lopez Practice"]
+[Site "ChessScope"]
+[Date "2026.10.31"]
+[Round "1"]
+[White "White Player"]
+[Black "Black Player"]
+[Result "*"]
+[Opening "Ruy Lopez"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O 9. h3 Na5 10. Bc2 c5 11. d4 Qc7 12. Nbd2 cxd4 13. cxd4 Nc6 *`;
+            sampleButton.addEventListener('click', () => {
+                input.value = sample;
+                status.textContent = 'Sample PGN loaded. Select Review game to begin.';
+                input.focus();
+            });
+            fileInput.addEventListener('change', async () => {
+                const file = fileInput.files && fileInput.files[0];
+                if (!file) return;
+                try {
+                    input.value = await file.text();
+                    status.textContent = `${file.name} loaded. Select Review game to begin.`;
+                } catch (error) {
+                    status.textContent = 'Could not read that file. Please paste the PGN instead.';
+                }
+            });
+            input.addEventListener('input', () => {
+                if (input.value.trim()) status.textContent = 'PGN ready for review.';
+            });
+        })();
+    </script>
 </body>
 </html>
